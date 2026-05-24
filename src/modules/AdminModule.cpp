@@ -23,6 +23,7 @@
 #endif
 
 #include "Default.h"
+#include "DisplayFormatters.h"
 #include "MeshRadio.h"
 #include "TypeConversions.h"
 
@@ -858,6 +859,57 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
 
             changes = SEGMENT_CONFIG | SEGMENT_MODULECONFIG;
         }
+
+        // Mirror the preset's bandwidth / spread_factor / coding_rate back into
+        // config.lora when use_preset is true. Some clients (notably the iOS
+        // app) read these fields directly to display the bitrate and refuse to
+        // render a value when they are zero. The radio honors a custom
+        // coding_rate in [LORA_CR_MIN, LORA_CR_MAX] even with use_preset
+        // (see RadioInterface::applyModemConfig), so don't clobber it then.
+        if (config.lora.use_preset && myRegion) {
+            float presetBwKHz = 0;
+            uint8_t presetSf = 0, presetCr = 0;
+            modemPresetToParams(config.lora.modem_preset, myRegion->wideLora, presetBwKHz, presetSf, presetCr);
+            config.lora.bandwidth = bwKHzToCode(presetBwKHz);
+            config.lora.spread_factor = presetSf;
+            if (config.lora.coding_rate < LORA_CR_MIN || config.lora.coding_rate > LORA_CR_MAX) {
+                config.lora.coding_rate = presetCr;
+            }
+        }
+
+        // Auto-rename the primary channel when the modem preset changes, but
+        // only when it still carries a default-style name (one of the preset
+        // display names, or empty) AND uses the default PSK ("AQ=="). This
+        // mirrors the convention that the primary channel name tracks the
+        // preset, and avoids the Android-app side-effect where a manual rename
+        // would also re-roll the PSK.
+        if (oldLoraConfig.modem_preset != config.lora.modem_preset && config.lora.use_preset) {
+            meshtastic_Channel &primary = channels.getByIndex(channels.getPrimaryIndex());
+            const bool hasDefaultPsk =
+                primary.has_settings && primary.settings.psk.size == 1 && primary.settings.psk.bytes[0] == 1;
+            if (hasDefaultPsk) {
+                bool nameMatchesAnyPreset = (primary.settings.name[0] == '\0');
+                for (int p = _meshtastic_Config_LoRaConfig_ModemPreset_MIN;
+                     !nameMatchesAnyPreset && p <= _meshtastic_Config_LoRaConfig_ModemPreset_MAX; ++p) {
+                    const char *presetName = DisplayFormatters::getModemPresetDisplayName(
+                        (meshtastic_Config_LoRaConfig_ModemPreset)p, false, true);
+                    if (presetName && strcmp(presetName, "Invalid") != 0 &&
+                        strcmp(primary.settings.name, presetName) == 0) {
+                        nameMatchesAnyPreset = true;
+                    }
+                }
+                if (nameMatchesAnyPreset) {
+                    const char *newName =
+                        DisplayFormatters::getModemPresetDisplayName(config.lora.modem_preset, false, true);
+                    if (newName && strcmp(newName, "Invalid") != 0) {
+                        strncpy(primary.settings.name, newName, sizeof(primary.settings.name) - 1);
+                        primary.settings.name[sizeof(primary.settings.name) - 1] = '\0';
+                        LOG_INFO("Auto-rename primary channel to '%s' on preset change", primary.settings.name);
+                        changes |= SEGMENT_CHANNELS;
+                    }
+                }
+            }
+        }
         break;
     }
     case meshtastic_Config_bluetooth_tag:
@@ -1021,7 +1073,19 @@ bool AdminModule::handleSetModuleConfig(const meshtastic_ModuleConfig &c)
 
 void AdminModule::handleSetChannel(const meshtastic_Channel &cc)
 {
-    channels.setChannel(cc);
+    meshtastic_Channel patched = cc;
+
+    // Workaround: the iOS app cannot configure position_precision below the
+    // "1.5 km" step (proto value 14) — Android and the web UI can. Treat the
+    // iOS default 14 as a request for ~350 m (proto value 16) so iOS users get
+    // a useful obfuscation instead of a near-region drop. Other precisions
+    // (including the explicit 15 and 17 from non-iOS clients) are left as-is.
+    if (patched.has_settings && patched.settings.has_module_settings &&
+        patched.settings.module_settings.position_precision == 14) {
+        patched.settings.module_settings.position_precision = 16;
+    }
+
+    channels.setChannel(patched);
     if (channels.ensureLicensedOperation()) {
         sendWarning(licensedModeMessage);
     }
