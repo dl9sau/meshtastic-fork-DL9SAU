@@ -4,6 +4,47 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-24  iOS app round 2 — BW picker + channel rename on custom mode
+-----------------------------------------------------------------------
+Two more iOS-specific quirks reported while testing the Stage-1 fixes:
+
+* Bug 1: with our config.lora bandwidth mirror in place (Stage 1),
+  the iOS LoRa screen displays "31 kHz" instead of the actual 250 kHz.
+  Root cause is in Meshtastic-Apple LoRaConfig.swift / Bandwidths
+  enum: the picker tags the 250 kHz row with proto value 0
+  (`tag(bw.rawValue == 250 ? 0 : bw.rawValue)`), all others 1:1.
+  When the firmware mirrors the real 250, iOS can't find a tag and
+  falls back to the first row (31). See meshtastic/Meshtastic-Apple
+  issue #1192.
+
+  Fix: after mirroring, if the resulting bandwidth code is exactly
+  250 we rewrite it to 0. The radio ignores config.lora.bandwidth
+  while use_preset=true (RadioInterface::applyModemConfig honours
+  the preset's BW), so this is purely cosmetic plumbing for iOS.
+
+* Bug 2: setting SF=9 / BW=250 manually in the iOS app (i.e.
+  use_preset=false) does not flip the primary channel name to
+  "MediumFast", even though SF=9/BW=250/CR=5 is functionally
+  MediumFast. Our Stage-1 auto-rename gated on
+  oldConfig.modem_preset != new && use_preset.
+
+  Fix: switch the auto-rename trigger to an *effective* preset
+  comparison. New helper modemPresetForParams(bw, sf, cr,
+  wideLora) in MeshRadio.h reverse-looks-up the preset that
+  matches a given parameter triple (or returns MODEM_PRESET_END).
+  AdminModule now compares oldEffective vs newEffective: if
+  use_preset=true the value comes from modem_preset, otherwise
+  from the reverse lookup. If they differ AND the new effective
+  preset is known, we rename the primary channel — and also
+  engage the geo auto-switcher's user-override magic, same as
+  before.
+
+  Side effect: setting bizarre custom values that don't match any
+  preset (e.g. SF=10/BW=125/CR=8) leaves the channel name
+  untouched (newEffective == MODEM_PRESET_END), which is the
+  correct behaviour.
+
+
 2026-05-24  Stage 3: geo-fenced auto modem-preset switch
 --------------------------------------------------------
 Switches config.lora.modem_preset automatically based on the

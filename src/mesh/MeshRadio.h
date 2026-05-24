@@ -189,3 +189,31 @@ static inline float modemPresetToBwKHz(meshtastic_Config_LoRaConfig_ModemPreset 
     modemPresetToParams(preset, wideLora, bwKHz, sf, cr);
     return bwKHz;
 }
+
+/**
+ * DL9SAU: Reverse lookup — given a (bw, sf, cr) triple, return the modem
+ * preset that produces those parameters, or MODEM_PRESET_END if no preset
+ * matches. Used by AdminModule to keep the primary channel name in sync
+ * even when the user picked SF/BW manually (use_preset=false) but the
+ * values happen to coincide with a known preset (e.g. iOS app writes
+ * SF=9/BW=250 instead of just selecting MediumFast).
+ *
+ * BW is compared with a small tolerance because the firmware stores it
+ * with limited precision (bwKHzToCode round-trips).
+ */
+static inline meshtastic_Config_LoRaConfig_ModemPreset modemPresetForParams(float bwKHz, uint8_t sf, uint8_t cr, bool wideLora)
+{
+    for (int p = _meshtastic_Config_LoRaConfig_ModemPreset_MIN; p <= _meshtastic_Config_LoRaConfig_ModemPreset_MAX; ++p) {
+        float pBw = 0;
+        uint8_t pSf = 0, pCr = 0;
+        modemPresetToParams((meshtastic_Config_LoRaConfig_ModemPreset)p, wideLora, pBw, pSf, pCr);
+        if (pSf == sf && pCr == cr) {
+            float diff = pBw - bwKHz;
+            if (diff < 0)
+                diff = -diff;
+            if (diff < 1.0f) // 1 kHz tolerance covers code-quantised values
+                return (meshtastic_Config_LoRaConfig_ModemPreset)p;
+        }
+    }
+    return MODEM_PRESET_END;
+}

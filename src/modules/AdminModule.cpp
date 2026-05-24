@@ -876,17 +876,42 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
             if (config.lora.coding_rate < LORA_CR_MIN || config.lora.coding_rate > LORA_CR_MAX) {
                 config.lora.coding_rate = presetCr;
             }
+            // DL9SAU workaround for meshtastic/Meshtastic-Apple#1192: the
+            // iOS Bandwidth picker tags the 250 kHz row with proto value 0
+            // (all others 1:1). When we mirror the real 250 the picker
+            // can't find a matching tag and falls back to "31 kHz". The
+            // firmware ignores config.lora.bandwidth while use_preset is
+            // true (see RadioInterface::applyModemConfig), so re-writing
+            // 250 -> 0 here is safe and lets iOS render correctly.
+            if (config.lora.bandwidth == 250) {
+                config.lora.bandwidth = 0;
+            }
         }
 
-        // Auto-rename the primary channel when the modem preset changes.
-        // Logic lives in Channels::renamePrimaryForPresetChange so the
-        // geo-based auto-switcher can reuse it.
-        if (oldLoraConfig.modem_preset != config.lora.modem_preset && config.lora.use_preset) {
-            if (channels.renamePrimaryForPresetChange(config.lora.modem_preset)) {
+        // Auto-rename the primary channel when the *effective* modem preset
+        // changes. Effective preset = config.lora.modem_preset when
+        // use_preset=true, or the preset matching SF/BW/CR otherwise. This
+        // covers the iOS-app case where the user picks "Modem: Custom" plus
+        // SF=9 / BW=250 (= MediumFast) without flipping use_preset back to
+        // true. Logic for the actual rename lives in
+        // Channels::renamePrimaryForPresetChange so the geo-based
+        // auto-switcher can reuse it.
+        const bool wideLora = myRegion ? myRegion->wideLora : false;
+        const meshtastic_Config_LoRaConfig_ModemPreset oldEffective =
+            oldLoraConfig.use_preset
+                ? oldLoraConfig.modem_preset
+                : modemPresetForParams(bwCodeToKHz(oldLoraConfig.bandwidth), oldLoraConfig.spread_factor,
+                                       oldLoraConfig.coding_rate, wideLora);
+        const meshtastic_Config_LoRaConfig_ModemPreset newEffective =
+            config.lora.use_preset ? config.lora.modem_preset
+                                   : modemPresetForParams(bwCodeToKHz(config.lora.bandwidth), config.lora.spread_factor,
+                                                          config.lora.coding_rate, wideLora);
+        if (oldEffective != newEffective && newEffective != MODEM_PRESET_END) {
+            if (channels.renamePrimaryForPresetChange(newEffective)) {
                 changes |= SEGMENT_CHANNELS;
             }
-            // DL9SAU: any modem_preset change that did NOT originate from
-            // our own geo auto-switcher counts as a user override. Park a
+            // DL9SAU: any preset change that did NOT originate from our
+            // own geo auto-switcher counts as a user override. Park a
             // magic word in noinit RAM so the auto-switcher leaves us
             // alone until power-cycle.
             if (!geoPresetSwitcher.isAutoSwitchInProgress()) {
