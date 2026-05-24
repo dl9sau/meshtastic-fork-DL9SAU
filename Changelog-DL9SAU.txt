@@ -198,13 +198,17 @@ B) Repeat traffic (we relay someone else's packet) — only relevant
 
    B1) Drop-filter — we refuse to repeat at all:
        * Telemetry packets (decoded.portnum == TELEMETRY_APP).
+       * Neighbor-info packets (decoded.portnum ==
+         NEIGHBORINFO_APP). Same rationale as telemetry — pure
+         informational broadcast, not relevant for next_hop
+         learning, no value in our relay.
        * Packets we couldn't decode (foreign channel / wrong PSK,
          i.e. which_payload_variant != decoded_tag, or any payload
          that survived perhapsDecode without success).
        This is essentially the existing CORE_PORTNUMS_ONLY filter
-       plus LOCAL_ONLY plus an extra "no telemetry" rule, but
-       baked into the rebroadcast path itself rather than depending
-       on user config.
+       plus LOCAL_ONLY plus an extra "no telemetry / no neighbor
+       info" rule, but baked into the rebroadcast path itself
+       rather than depending on user config.
 
    B2) Default repeat power/CR — for everything that does pass the
        filter:
@@ -223,6 +227,15 @@ B) Repeat traffic (we relay someone else's packet) — only relevant
        * ROUTING_APP packets (ACK/NAK and routing control traffic).
          These must remain as reliable as configured so that the
          user can diagnose *why* a message did or did not arrive.
+
+Note on ROUTING_APP and next-hop learning:
+NextHopRouter::sniffReceived only updates origTx->next_hop in
+response to ACK/reply packets (those with request_id or reply_id
+set). So forwarding ROUTING_APP at full power does make us
+slightly more attractive as a next_hop. We accept that trade-off
+because reliable ACKs matter more for end-user experience than
+shaving a bit off our next_hop attractiveness in a client role.
+If this becomes a problem we revisit B3.
 
 Why CR=5 works even when the mesh runs CR=8:
 LoRa explicit-header mode (which Meshtastic uses) carries the
