@@ -187,6 +187,17 @@ class RadioInterface
     /// \return true if initialisation succeeded.
     virtual bool reconfigure();
 
+    /// DL9SAU Stage 2: per-packet radio parameter override helpers.
+    /// These are thin wrappers around the underlying RadioLib calls;
+    /// startSend() uses them to temporarily change the radio before a
+    /// transmission and restore the previous value afterwards. The
+    /// base implementation does nothing — backends that support these
+    /// override RadioLib calls (RF95 / SX126x / SX128x / LR11x0 /
+    /// SimRadio) override the virtuals.
+    /// \return 0 on success, -1 if not supported.
+    virtual int16_t setRuntimeCodingRate(uint8_t /*cr*/) { return -1; }
+    virtual int16_t setRuntimeTxPower(int8_t /*dBm*/) { return -1; }
+
     /** The delay to use for retransmitting dropped packets */
     [[nodiscard]] uint32_t getRetransmissionMsec(const meshtastic_MeshPacket *p);
 

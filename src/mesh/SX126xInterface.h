@@ -32,6 +32,10 @@ template <class T> class SX126xInterface : public RadioLibInterface
 
     void setTCXOVoltage(float voltage) { tcxoVoltage = voltage; }
 
+    /// DL9SAU Stage 2: thin wrappers for per-packet CR / power override.
+    int16_t setRuntimeCodingRate(uint8_t cr) override { return lora.setCodingRate(cr); }
+    int16_t setRuntimeTxPower(int8_t dBm) override { return lora.setOutputPower(dBm); }
+
   protected:
     float currentLimit = 140; // Higher OCP limit for SX126x PA
     float tcxoVoltage = 0.0;

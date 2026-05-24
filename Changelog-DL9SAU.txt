@@ -4,6 +4,50 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-24  Stage 2 plumbing — per-packet CR / TX-power override fields
+-----------------------------------------------------------------------
+Lays the infrastructure for Stage 2 / 4 without enabling any new
+behaviour yet — dormant code, builds clean, no sender sets the
+override flags so RX/TX behaviour is bit-for-bit identical.
+
+What landed:
+* meshtastic_MeshPacket gained three transient fields with nanopb-
+  style has_* flags (NOT serialised; the wire encoding walks the
+  X-Macro _FIELDLIST only, not the struct):
+    has_tx_cr_override     / tx_cr_override      (uint8_t)
+    has_tx_power_override  / tx_power_override   (int8_t)
+    has_tx_preset_override / tx_preset_override  (uint8_t, Stage 4)
+  packetPool.allocZeroed() naturally starts every packet with "no
+  override" because all has_* default to false.
+* RadioInterface base class got two new virtuals:
+    int16_t setRuntimeCodingRate(uint8_t cr)
+    int16_t setRuntimeTxPower(int8_t dBm)
+  Default implementation returns -1 ("not supported"). The four
+  real RadioLib backends (RF95Interface, SX126xInterface,
+  SX128xInterface, LR11x0Interface) override both with thin
+  wrappers around the RadioLib setCodingRate / setOutputPower
+  calls. SimRadio inherits the no-op default.
+* RadioLibInterface::startSend honours the override flags:
+  - save the current cr / power members
+  - call setRuntime* with the override value
+  - if the backend returns -1, mark the override as not-applied
+  RadioLibInterface::completeSending restores cr / power via
+  setRuntime* after every TX, conditional on the save-state.
+  Two new protected members in RadioLibInterface track the
+  save-state: txCrOverrideActive / txCrOverrideSaved,
+  txPowerOverrideActive / txPowerOverrideSaved.
+
+What deliberately did NOT land:
+* No sender site sets the override flags yet — PositionModule,
+  the telemetry modules, FloodingRouter / NextHopRouter
+  perhapsRebroadcast are unchanged. That's the next step
+  (planned next) and will activate Stage 2's policy.
+* No Stage 4 preset-override honouring in startSend yet — the
+  has_tx_preset_override field exists but is not consulted.
+  Adding that needs the full reconfigure() dance, which we'll
+  build with Stage 4.
+
+
 2026-05-24  Stage 3 refinement: outside-all-regions fallback = LongFast
 -----------------------------------------------------------------------
 Originally GeoPresetSwitcher only fired a switch when the local

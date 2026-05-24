@@ -18,6 +18,20 @@ class RF95Interface : public RadioLibInterface
     // TODO: Verify that this irq flag works with RFM95 / SX1276 radios the way it used to
     bool isIRQPending() override { return lora->getIRQFlags() & RADIOLIB_SX127X_MASK_IRQ_FLAG_VALID_HEADER; }
 
+    /// DL9SAU Stage 2: thin wrappers for per-packet CR / power override.
+    /// RF95 setOutputPower takes an optional useRfo bool. Mirror what
+    /// reconfigure() in RF95Interface.cpp does so the override path uses
+    /// the same PA selection.
+    int16_t setRuntimeCodingRate(uint8_t cr) override { return lora->setCodingRate(cr); }
+    int16_t setRuntimeTxPower(int8_t dBm) override
+    {
+#ifdef USE_RF95_RFO
+        return lora->setOutputPower(dBm, true);
+#else
+        return lora->setOutputPower(dBm);
+#endif
+    }
+
     /// Initialise the Driver transport hardware and software.
     /// Make sure the Driver is properly configured before calling init().
     /// \return true if initialisation succeeded.

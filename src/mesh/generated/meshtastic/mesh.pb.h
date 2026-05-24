@@ -1065,6 +1065,18 @@ typedef struct _meshtastic_MeshPacket {
     uint32_t tx_after;
     /* Indicates which transport mechanism this packet arrived over */
     meshtastic_MeshPacket_TransportMechanism transport_mechanism;
+    /* DL9SAU Stage 2: per-packet radio overrides. These never travel over
+     * the wire (nanopb wire-encoding only walks the X-Macro _FIELDLIST,
+     * not the struct), they live only on the local TX queue.
+     * The has_* flags follow nanopb's optional-field convention so that
+     * packetPool.allocZeroed() naturally starts every packet with "no
+     * overrides active". */
+    bool has_tx_cr_override;
+    uint8_t tx_cr_override;   /* override coding_rate in [LORA_CR_MIN..LORA_CR_MAX] for this TX only */
+    bool has_tx_power_override;
+    int8_t tx_power_override; /* override TX power in dBm for this TX only */
+    bool has_tx_preset_override;
+    uint8_t tx_preset_override; /* override modem_preset enum value for this TX (Stage 4) */
 } meshtastic_MeshPacket;
 
 /* The bluetooth to device link:

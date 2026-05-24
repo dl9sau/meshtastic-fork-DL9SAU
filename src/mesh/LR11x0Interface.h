@@ -31,6 +31,12 @@ template <class T> class LR11x0Interface : public RadioLibInterface
     void resetAGC() override;
 #endif
 
+    /// DL9SAU Stage 2: thin wrappers for per-packet CR / power override.
+    /// LR11x0 setCodingRate takes a second arg (longInterleaving) — keep the
+    /// reconfigure()'s "long interleaving except CR=4/7" rule consistent here.
+    int16_t setRuntimeCodingRate(uint8_t cr) override { return lora.setCodingRate(cr, cr != 7); }
+    int16_t setRuntimeTxPower(int8_t dBm) override { return lora.setOutputPower(dBm); }
+
   protected:
     /**
      * Specific module instance

@@ -271,6 +271,15 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
   protected:
     uint32_t activeReceiveStart = 0;
 
+    /// DL9SAU Stage 2: state for per-packet CR / TX-power overrides.
+    /// *Active flags indicate that startSend() applied an override; the
+    /// *Saved values hold the radio's pre-override CR / power so
+    /// completeSending() (or the failure path) can restore them.
+    bool txCrOverrideActive = false;
+    uint8_t txCrOverrideSaved = 5;
+    bool txPowerOverrideActive = false;
+    int8_t txPowerOverrideSaved = 17;
+
     bool receiveDetected(uint16_t irq, unsigned long syncWordHeaderValidFlag, unsigned long preambleDetectedFlag);
 
     /** Do any hardware setup needed on entry into send configuration for the radio.

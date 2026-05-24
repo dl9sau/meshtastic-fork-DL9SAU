@@ -543,6 +543,19 @@ void RadioLibInterface::completeSending()
         // We are done sending that packet, release it
         packetPool.release(p);
     }
+
+    // DL9SAU Stage 2: restore CR / power to the home configuration so the
+    // next TX and the receiver re-arm in startReceive() use the global
+    // settings. Done unconditionally; the *Active flags guard against
+    // calling setRuntime* when no override was applied.
+    if (txCrOverrideActive) {
+        setRuntimeCodingRate(txCrOverrideSaved);
+        txCrOverrideActive = false;
+    }
+    if (txPowerOverrideActive) {
+        setRuntimeTxPower(txPowerOverrideSaved);
+        txPowerOverrideActive = false;
+    }
 }
 
 void RadioLibInterface::handleReceiveInterrupt()
@@ -692,6 +705,29 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
         return false;
     } else {
         configHardwareForSend(); // must be after setStandby
+
+        // DL9SAU Stage 2: apply per-packet radio overrides for this TX only.
+        // Save current values so completeSending() / the error path can
+        // restore them. Backends that do not implement the override hook
+        // return -1 from setRuntime*; we then leave the radio alone.
+        if (txp->has_tx_cr_override && txp->tx_cr_override != cr) {
+            txCrOverrideActive = true;
+            txCrOverrideSaved = cr;
+            if (setRuntimeCodingRate(txp->tx_cr_override) != 0) {
+                txCrOverrideActive = false; // backend refused, don't try to restore later
+            }
+        } else {
+            txCrOverrideActive = false;
+        }
+        if (txp->has_tx_power_override && txp->tx_power_override != power) {
+            txPowerOverrideActive = true;
+            txPowerOverrideSaved = power;
+            if (setRuntimeTxPower(txp->tx_power_override) != 0) {
+                txPowerOverrideActive = false;
+            }
+        } else {
+            txPowerOverrideActive = false;
+        }
 
         size_t numbytes = beginSending(txp);
 
