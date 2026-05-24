@@ -98,6 +98,18 @@ class Channels
 
     int16_t getHash(ChannelIndex i) { return hashes[i]; }
 
+    /**
+     * DL9SAU: Rename the primary channel to the new modem preset's display
+     * name, but only when it currently uses the default PSK (AQ==) and its
+     * name is empty or already equals one of the known preset display names
+     * (LongFast, MediumFast, ...). Used both by AdminModule on a user-driven
+     * preset change and by GeoPresetSwitcher on an automatic switch.
+     *
+     * @return true if the name was actually rewritten (caller should persist
+     *         SEGMENT_CHANNELS).
+     */
+    bool renamePrimaryForPresetChange(meshtastic_Config_LoRaConfig_ModemPreset newPreset);
+
   private:
     /** Given a channel index, change to use the crypto key specified by that index
      *

@@ -2,6 +2,7 @@
 #include "PositionModule.h"
 #include "Default.h"
 #include "GPS.h"
+#include "GeoPresetSwitcher.h"
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "PositionPrecision.h"
@@ -408,6 +409,10 @@ int32_t PositionModule::runOnce()
         LOG_DEBUG("Sleep for %ims, then awaking to send position again", nightyNightMs);
         doDeepSleep(nightyNightMs, false, false);
     }
+
+    // DL9SAU: geo-based auto modem-preset switch. Cheap call; the switcher
+    // has its own 20-min cadence throttle and prerequisite gates.
+    geoPresetSwitcher.evaluate();
 
     meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(nodeDB->getNodeNum());
     if (node == nullptr)

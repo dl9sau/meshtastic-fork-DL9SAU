@@ -4,6 +4,65 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-24  Stage 3: geo-fenced auto modem-preset switch
+--------------------------------------------------------
+Switches config.lora.modem_preset automatically based on the
+current GPS position, so a traveller does not have to fiddle
+with settings when crossing into Berlin, Stuttgart/Tübingen
+etc. No internet / no proto changes — purely on-device.
+
+New files:
+* src/mesh/GeoPresetSwitcher.{h,cpp} — owns the region table,
+  the cadence/cooldown throttles, the user-override bookkeeping,
+  and the actual switch (writes config.lora, calls Channels::
+  renamePrimaryForPresetChange, persists, requests reboot).
+
+Refactor:
+* Channels::renamePrimaryForPresetChange() extracted from the
+  AdminModule lora-tag handler so both the user-initiated path
+  and the auto-switch share the same naming convention.
+* AdminModule::handleSetConfig: detects a user-initiated
+  modem_preset change (= one that did not originate from the
+  auto-switcher, checked via geoPresetSwitcher.
+  isAutoSwitchInProgress()) and parks a magic word in noinit
+  RAM via GeoPresetSwitcher::markUserOverride(). The auto-
+  switcher honours that magic and stays out of the way.
+
+Hook:
+* PositionModule::runOnce calls geoPresetSwitcher.evaluate()
+  every tick (5 s default); internal 20-min throttle filters.
+
+Region table (hardcoded, EU868 only):
+* Berlin (city proper, Brandenburg deliberately out)
+  52.35°–52.70° N × 13.10°–13.70° E  → MediumFast
+* Stuttgart / Reutlingen / Tübingen corridor
+  48.25°–48.80° N × 8.90°–9.35° E    → MediumFast
+* Rheinland (Cologne / Bonn)
+  50.50°–51.20° N × 6.50°–7.50° E    → ShortSlow
+
+Tuning:
+* Re-evaluation cadence: 20 min.
+* Cooldown after a switch: 20 min.
+* Inward boundary margin: ~5 km (450 000 / 750 000 in 1e-7°
+  for lat/lon, fixed for mid-latitudes Europe).
+
+Activation gate:
+* config.lora.region == EU_868
+* config.lora.use_preset == true   (users on custom SF/BW are
+  intentionally exempt — that's their "off switch")
+* No user-override magic in noinit RAM
+
+User-override mechanics:
+* AUTO_OVERRIDE_MAGIC is written into a noinit RAM cell
+  (RTC_NOINIT_ATTR on ESP32, __attribute__((section(".noinit")))
+  elsewhere). That cell survives a soft reboot — including our
+  own preset-change-triggered reboot — but is undefined after a
+  power cycle or hardware reset, so the magic no longer matches
+  and the auto-switcher resumes. This matches the user request:
+  "wenn ich wieder in den auto mode gehen moechte mache ich
+  einen Neustart."
+
+
 2026-05-24  Hop-limit overrides for own position/telemetry
 ----------------------------------------------------------
 * DeviceTelemetry, EnvironmentTelemetry, HealthTelemetry,
@@ -32,6 +91,12 @@ Local divergences from upstream master. Entries newest first.
 * Clamp position_precision == 14 (~1.5 km, the lowest value the
   iOS app exposes) to 16 (~350 m) in handleSetChannel(). Other
   precisions are untouched.
+
+
+Implementation order (decided 2026-05-24):
+  1. Stage 3  — geo-fenced auto modem-preset switch (next)
+  2. Stages 2 + 4 — bundled, share the per-packet radio-override
+     plumbing in startSend() + all radio backends
 
 
 TODO — Stage 2: per-packet CR + TX-power overrides
@@ -120,3 +185,115 @@ Caveats / open questions:
   to use the canonical lastByte(getNodeNum()) trick already used in
   NextHopRouter::perhapsRebroadcast (line ~132).
 * Decide whether to expose this behaviour via userprefs or hardcode.
+
+
+Stage 3 follow-ups — feature is implemented, see top of file
+------------------------------------------------------------
+* Verify the bounding boxes in the field — Berlin (Brandenburg
+  must NOT trigger), Stuttgart-Tübingen corridor, Rheinland.
+* Consider seeding a few more regions once we have ≥2 corroborating
+  sources: Brandenburg outside Berlin, Braunschweig/Hildesheim,
+  HB9LU/Schweiz.
+* If a node sits very close to a region boundary (e.g. antenna on
+  the edge of the Berlin bounding box) and GPS jitter exceeds the
+  5 km margin, slow flapping every 20 min may still appear. If
+  observed, widen the margin or add a "must be inside for two
+  consecutive evaluations" rule.
+* The fallback `__attribute__((section(".noinit")))` for the user-
+  override magic word is fine on arm-eabi-gcc / nrf52 but may need
+  verification on other non-ESP32 backends.
+
+Data points collected 2026-05-24 (kept as a reference for follow-up
+table extensions):
+
+Firm — go into the lookup table:
+* Berlin (city proper)            → MediumFast
+  Community consensus, multiple sources:
+  codeberg.org/berlinmesh/meshwiki, meshmap.de, potatomesh.net.
+  Note: Brandenburg around Berlin did NOT migrate; the bounding
+  box must be tight to the city, not the whole metropolitan area.
+* Stuttgart / Tübingen corridor   → MediumFast
+  Confirmed by direct user observation while travelling. Covers
+  the Stuttgart-Reutlingen-Tübingen axis.
+* Rheinland (Cologne / Bonn area) → ShortSlow
+  Primary source: https://www.meshrheinland.de/meshtastic/intro
+  "Region/Band: EU868, Modem-Preset: Kurze Reichweite - Langsam
+  (ShortSlow), WhatsApp Community Meshtastic Rheinland mit über
+  200 Mitgliedern".
+
+Not firm — explicitly stays on the global default for now:
+* Brandenburg (outside Berlin)    — did NOT join Berlin's MF;
+  field reports show MediumSlow or LongFast, not consistent
+  enough to encode.
+* Braunschweig / Hildesheim       — user observed LongFast nodes
+  there; the earlier "MediumSlow" claim from web search is not
+  corroborated. Stay on default.
+* Kiel                            — experimented with MediumFast
+  in Jan 2026, reverted to LongFast (meshtastic-kiel.de/preset/).
+  Stay on default.
+* Western Switzerland (HB9LU)     — MediumFast experimentation
+  only, not yet a community standard. Stay on default for now.
+
+(Original implementation sketch + open questions resolved by the
+2026-05-24 Stage 3 commit — see top of file.)
+
+
+TODO — Stage 4: dual-preset position beacon for lost-device recovery
+--------------------------------------------------------------------
+Goal:
+For roles ≤ CLIENT (i.e. CLIENT, CLIENT_BASE, CLIENT_MUTE, SENSOR,
+TRACKER, TAK_TRACKER), if the device is currently running a non-
+standard modem preset (any preset where SF or BW differ from
+LongFast — CR is irrelevant), each scheduled position beacon is
+followed by a second beacon sent on LongFast.
+
+Rationale: if you lose the device while travelling on MediumFast,
+the LongFast beacon increases the chance that *any* random
+Meshtastic node within range can hear it and forward your position
+to your phone via MQTT / the public network.
+
+Implementation sketch:
+1. Detect "non-standard" preset: SF != 11 || BW != 250 kHz when
+   use_preset=true; same check via the explicit fields otherwise.
+   See modemPresetToParams() in MeshRadio.h for the LongFast
+   reference values.
+2. Right after sendOurPosition() finishes (or just before, with
+   the same packet), enqueue a duplicate position packet flagged
+   for LongFast transmission.
+3. Honor that flag in RadioLibInterface::startSend(): if the
+   packet carries a temporary "force-preset" override, call a
+   full radio reconfigure() with the LongFast SF/BW/CR before
+   startTransmit, then restore the original config afterwards.
+4. Backends touched: same as Stage 2 (RF95 / SX126x / SX128x /
+   LR11x0 / SimRadio). The reconfigure path is more invasive
+   than CR/power-only because BW and SF affect timing.
+
+Caveats:
+* Reconfiguring BW/SF takes longer than CR/power and puts the
+  radio out-of-mesh for the duration of the LongFast TX — RX of
+  packets on the home preset is blind during that window. Keep
+  the dual-mode beacon strictly rate-limited (e.g. at most every
+  N minutes, possibly only when moving / battery healthy).
+* The LongFast beacon should carry the same packet contents
+  (precision-clamped position, sender, NodeInfo if appropriate)
+  so a finder can act on it without needing the home channel PSK.
+  Consider sending it on the default (empty-name → "LongFast")
+  channel with the default PSK so anyone can decode it.
+* This wants to integrate with the position_precision logic so
+  the LongFast beacon doesn't leak an exact location either.
+* Stage 4 logically depends on Stage 2 plumbing (per-packet
+  radio override fields) — do Stage 2 first.
+
+
+Reference URLs collected during research
+----------------------------------------
+* https://codeberg.org/berlinmesh/meshwiki/wiki
+* https://meshmap.de/
+* https://potatomesh.net/
+* https://meshtastic-kiel.de/preset/
+* https://mtnme.sh/mediumfast/
+* https://hb9lu.ch/medium_fast-neuer-modus-fuer-schnellere-datenuebertragung-im-meshtastic-netz/
+* https://freq51.net/migrate
+* https://meshtastic.org/blog/why-your-mesh-should-switch-from-longfast/
+* https://www.meshrheinland.de/meshtastic/grundeinstellungen
+  (returned 403 to automated fetch — needs manual check)

@@ -387,6 +387,41 @@ bool Channels::isDefaultChannel(ChannelIndex chIndex)
     return false;
 }
 
+bool Channels::renamePrimaryForPresetChange(meshtastic_Config_LoRaConfig_ModemPreset newPreset)
+{
+    meshtastic_Channel &primary = getByIndex(getPrimaryIndex());
+    if (!primary.has_settings)
+        return false;
+
+    // Only touch a channel that still carries the default PSK ("AQ==").
+    const bool hasDefaultPsk = primary.settings.psk.size == 1 && primary.settings.psk.bytes[0] == 1;
+    if (!hasDefaultPsk)
+        return false;
+
+    // The current name must be empty OR equal one of the known preset display
+    // names. Anything else is a user-chosen name we must not overwrite.
+    bool nameMatchesAnyPreset = (primary.settings.name[0] == '\0');
+    for (int p = _meshtastic_Config_LoRaConfig_ModemPreset_MIN;
+         !nameMatchesAnyPreset && p <= _meshtastic_Config_LoRaConfig_ModemPreset_MAX; ++p) {
+        const char *presetName =
+            DisplayFormatters::getModemPresetDisplayName((meshtastic_Config_LoRaConfig_ModemPreset)p, false, true);
+        if (presetName && strcmp(presetName, "Invalid") != 0 && strcmp(primary.settings.name, presetName) == 0) {
+            nameMatchesAnyPreset = true;
+        }
+    }
+    if (!nameMatchesAnyPreset)
+        return false;
+
+    const char *newName = DisplayFormatters::getModemPresetDisplayName(newPreset, false, true);
+    if (!newName || strcmp(newName, "Invalid") == 0)
+        return false;
+
+    strncpy(primary.settings.name, newName, sizeof(primary.settings.name) - 1);
+    primary.settings.name[sizeof(primary.settings.name) - 1] = '\0';
+    LOG_INFO("Auto-rename primary channel to '%s' on preset change", primary.settings.name);
+    return true;
+}
+
 bool Channels::hasDefaultChannel()
 {
     // If we don't use a preset or the default frequency slot, or we override the frequency, we don't have a default channel

@@ -24,6 +24,7 @@
 
 #include "Default.h"
 #include "DisplayFormatters.h"
+#include "GeoPresetSwitcher.h"
 #include "MeshRadio.h"
 #include "TypeConversions.h"
 
@@ -877,37 +878,19 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
             }
         }
 
-        // Auto-rename the primary channel when the modem preset changes, but
-        // only when it still carries a default-style name (one of the preset
-        // display names, or empty) AND uses the default PSK ("AQ=="). This
-        // mirrors the convention that the primary channel name tracks the
-        // preset, and avoids the Android-app side-effect where a manual rename
-        // would also re-roll the PSK.
+        // Auto-rename the primary channel when the modem preset changes.
+        // Logic lives in Channels::renamePrimaryForPresetChange so the
+        // geo-based auto-switcher can reuse it.
         if (oldLoraConfig.modem_preset != config.lora.modem_preset && config.lora.use_preset) {
-            meshtastic_Channel &primary = channels.getByIndex(channels.getPrimaryIndex());
-            const bool hasDefaultPsk =
-                primary.has_settings && primary.settings.psk.size == 1 && primary.settings.psk.bytes[0] == 1;
-            if (hasDefaultPsk) {
-                bool nameMatchesAnyPreset = (primary.settings.name[0] == '\0');
-                for (int p = _meshtastic_Config_LoRaConfig_ModemPreset_MIN;
-                     !nameMatchesAnyPreset && p <= _meshtastic_Config_LoRaConfig_ModemPreset_MAX; ++p) {
-                    const char *presetName = DisplayFormatters::getModemPresetDisplayName(
-                        (meshtastic_Config_LoRaConfig_ModemPreset)p, false, true);
-                    if (presetName && strcmp(presetName, "Invalid") != 0 &&
-                        strcmp(primary.settings.name, presetName) == 0) {
-                        nameMatchesAnyPreset = true;
-                    }
-                }
-                if (nameMatchesAnyPreset) {
-                    const char *newName =
-                        DisplayFormatters::getModemPresetDisplayName(config.lora.modem_preset, false, true);
-                    if (newName && strcmp(newName, "Invalid") != 0) {
-                        strncpy(primary.settings.name, newName, sizeof(primary.settings.name) - 1);
-                        primary.settings.name[sizeof(primary.settings.name) - 1] = '\0';
-                        LOG_INFO("Auto-rename primary channel to '%s' on preset change", primary.settings.name);
-                        changes |= SEGMENT_CHANNELS;
-                    }
-                }
+            if (channels.renamePrimaryForPresetChange(config.lora.modem_preset)) {
+                changes |= SEGMENT_CHANNELS;
+            }
+            // DL9SAU: any modem_preset change that did NOT originate from
+            // our own geo auto-switcher counts as a user override. Park a
+            // magic word in noinit RAM so the auto-switcher leaves us
+            // alone until power-cycle.
+            if (!geoPresetSwitcher.isAutoSwitchInProgress()) {
+                GeoPresetSwitcher::markUserOverride();
             }
         }
         break;
