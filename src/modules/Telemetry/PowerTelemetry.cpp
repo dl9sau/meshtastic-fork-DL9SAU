@@ -272,6 +272,8 @@ bool PowerTelemetryModule::sendTelemetry(NodeNum dest, bool phoneOnly)
             p->priority = meshtastic_MeshPacket_Priority_RELIABLE;
         else
             p->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+        // DL9SAU: own telemetry is direct-neighbor only (no rebroadcast)
+        p->hop_limit = 0;
         // release previous packet before occupying a new spot
         if (lastMeasurementPacket != nullptr)
             packetPool.release(lastMeasurementPacket);

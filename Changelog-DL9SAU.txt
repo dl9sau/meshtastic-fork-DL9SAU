@@ -1,0 +1,122 @@
+Changelog — DL9SAU fork of meshtastic/firmware
+==============================================
+
+Local divergences from upstream master. Entries newest first.
+
+
+2026-05-24  Hop-limit overrides for own position/telemetry
+----------------------------------------------------------
+* DeviceTelemetry, EnvironmentTelemetry, HealthTelemetry,
+  AirQualityTelemetry, PowerTelemetry:
+  set p->hop_limit = 0 before sendToMesh, so direct neighbours
+  do not rebroadcast our telemetry. Telemetry is per-node noise;
+  neighbours seeing it once is enough.
+* PositionModule::sendOurPosition: cap our own position hop_limit
+  at min(configured, 2). Position is high-volume on a busy mesh
+  and 2 hops is plenty for "where am I" updates.
+
+
+2026-05-24  AdminModule workarounds for iOS/Android client quirks
+-----------------------------------------------------------------
+(commit 2e7356ba1, src/modules/AdminModule.cpp)
+* Mirror modem preset's bandwidth/spread_factor/coding_rate back
+  into config.lora when use_preset=true, so clients that read
+  these fields directly (iOS app) no longer show "bitrate not set".
+  A custom coding_rate in [LORA_CR_MIN..LORA_CR_MAX] is preserved.
+* Auto-rename the primary channel to the new modem preset display
+  name when the preset changes, but only if the channel still uses
+  the default PSK ("AQ==") and its name is empty or matches one of
+  the known preset names. Avoids the Android side-effect where a
+  manual rename re-rolls the PSK, and keeps users in sync after an
+  LF<->MF switch.
+* Clamp position_precision == 14 (~1.5 km, the lowest value the
+  iOS app exposes) to 16 (~350 m) in handleSetChannel(). Other
+  precisions are untouched.
+
+
+TODO — Stage 2: per-packet CR + TX-power overrides
+--------------------------------------------------
+Stage 2 is one cohesive change because all of the following pieces
+share the same per-packet override plumbing in the radio path.
+
+A) Own traffic (originating from us):
+   * Own telemetry sent with CR=5 and TX-power = configured - 6 dB,
+     but at least 10 dBm, regardless of global LoRa config.
+   * Own position sent with CR=5 and configured TX-power (unchanged),
+     regardless of global LoRa config.
+
+B) Repeat traffic (we relay someone else's packet) — only relevant
+   for roles CLIENT and CLIENT_BASE (the two roles that actively
+   repeat as "user" nodes; REPEATER / ROUTER / ROUTER_LATE etc. are
+   intentionally unchanged):
+
+   B1) Drop-filter — we refuse to repeat at all:
+       * Telemetry packets (decoded.portnum == TELEMETRY_APP).
+       * Packets we couldn't decode (foreign channel / wrong PSK,
+         i.e. which_payload_variant != decoded_tag, or any payload
+         that survived perhapsDecode without success).
+       This is essentially the existing CORE_PORTNUMS_ONLY filter
+       plus LOCAL_ONLY plus an extra "no telemetry" rule, but
+       baked into the rebroadcast path itself rather than depending
+       on user config.
+
+   B2) Default repeat power/CR — for everything that does pass the
+       filter:
+       * CR = 5 regardless of global LoRa config.
+       * TX-power = configured - 6 dB, floor 10 dBm.
+
+   B3) Exceptions — repeat at full configured power and configured
+       CR (i.e. no override), because these must stay debuggable:
+       * Direct-message we are the next_hop for (p->next_hop ==
+         lastByte(getNodeNum()) AND the destination p->to is a node
+         in our NodeDB with has_hops_away && hops_away == 0 AND
+         last_heard within the last 12 h. The "12 h direct-heard"
+         test uses the existing NodeInfoLite fields, no new state.
+       * TRACEROUTE_APP packets (the user's "ping" in everyday
+         usage — Meshtastic's ping button issues a traceroute).
+       * ROUTING_APP packets (ACK/NAK and routing control traffic).
+         These must remain as reliable as configured so that the
+         user can diagnose *why* a message did or did not arrive.
+
+Why CR=5 works even when the mesh runs CR=8:
+LoRa explicit-header mode (which Meshtastic uses) carries the
+payload CR in the header. The header itself is always sent at the
+most-redundant CR=4/8. Receivers configured for any CR can therefore
+decode any payload CR, as long as SF and BW match.
+
+Implementation sketch:
+1. Add transient (non-proto) override fields to MeshPacket, e.g.
+   tx_cr_override and tx_power_override (signed int8, 0 = "no
+   override"). These never go over the air; they live only on the
+   local TX queue.
+2. In RadioLibInterface::startSend(), before configHardwareForSend(),
+   check the override fields and:
+     - if cr_override is set and differs from current cr, call
+       iface-specific setCodingRate() and remember the previous cr;
+     - same for tx_power_override / setOutputPower().
+3. After startTransmit returns (TX done), restore the previous cr
+   and power, so subsequent packets and RX use the configured ones.
+4. Touch all radio backends:
+     - RadioLibRF95 / RF95Interface
+     - SX126xInterface
+     - SX128xInterface
+     - LR11x0Interface
+     - SimRadio (portduino)
+5. Apply overrides at packet-creation sites:
+   * PositionModule::sendOurPosition (set CR override only).
+   * DeviceTelemetry / Environment / Health / AirQuality / Power
+     (set CR override + power override).
+   * NextHopRouter::perhapsRebroadcast and FloodingRouter::
+     perhapsRebroadcast for the relay path, with the B1/B2/B3
+     decisions above.
+
+Caveats / open questions:
+* Reconfigure latency vs. carrier-sense window — measure on T1000-E.
+* TX-power floor of 10 dBm vs. region power cap (EU868 = 14 dBm);
+  -6 dB hits 8 dBm and gets clamped up to 10 dBm. Fine on T1000-E.
+* CR override is a no-op when global CR is already 5 (LongFast,
+  Medium*, Short*) — skip the reconfigure cost in that case.
+* The "next_hop == us" condition for the direct-DM exception needs
+  to use the canonical lastByte(getNodeNum()) trick already used in
+  NextHopRouter::perhapsRebroadcast (line ~132).
+* Decide whether to expose this behaviour via userprefs or hardcode.

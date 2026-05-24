@@ -371,6 +371,15 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
     if (channel > 0)
         p->channel = channel;
 
+    // DL9SAU: cap our own outgoing position at 2 hops regardless of the
+    // configured global hop limit. Position is high-volume on a busy mesh
+    // and 2 hops is plenty for "where am I" updates.
+    {
+        constexpr uint8_t POSITION_HOP_CAP = 2;
+        uint8_t current = Default::getConfiguredOrDefaultHopLimit(config.lora.hop_limit);
+        p->hop_limit = current > POSITION_HOP_CAP ? POSITION_HOP_CAP : current;
+    }
+
     service->sendToMesh(p, RX_SRC_LOCAL, true);
 
     if (IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TRACKER,
