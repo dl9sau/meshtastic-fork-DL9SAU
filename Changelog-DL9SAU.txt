@@ -242,17 +242,16 @@ B) Repeat traffic (we relay someone else's packet) — only relevant
 
    B1) Drop-filter — we refuse to repeat at all:
        * Telemetry packets (decoded.portnum == TELEMETRY_APP).
-       * Neighbor-info packets (decoded.portnum ==
-         NEIGHBORINFO_APP). Same rationale as telemetry — pure
-         informational broadcast, not relevant for next_hop
-         learning, no value in our relay.
        * Packets we couldn't decode (foreign channel / wrong PSK,
          i.e. which_payload_variant != decoded_tag, or any payload
          that survived perhapsDecode without success).
-       This is essentially the existing CORE_PORTNUMS_ONLY filter
-       plus LOCAL_ONLY plus an extra "no telemetry / no neighbor
-       info" rule, but baked into the rebroadcast path itself
-       rather than depending on user config.
+       Everything else is repeated (with reduced power per B2).
+       In particular NODEINFO_APP (identity broadcast — needed so
+       other nodes know who we are) and NEIGHBORINFO_APP (the
+       opt-in topology / map-plot data from the NeighborInfo
+       module) are *not* dropped. NeighborInfo is filtered out
+       upstream by Router.cpp anyway when the receiving node has
+       the module disabled, so we don't need to second-guess.
 
    B2) Default repeat power/CR — for everything that does pass the
        filter:
