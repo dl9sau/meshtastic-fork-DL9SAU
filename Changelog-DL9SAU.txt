@@ -50,6 +50,37 @@ retention register / RTC slow memory. The two natural pairs are:
   - nRF52: NRF_POWER->GPREGRET / GPREGRET2
   - ESP32: RTC_NOINIT_ATTR
 
+Second lesson (the one we walked into after the first fix):
+on nRF52 with an *active* SoftDevice, direct writes to the
+NRF_POWER->GPREGRET / GPREGRET2 registers are masked by the
+SoftDevice. The CPU writes go through but the register state
+isn't preserved across the soft reset the way you'd expect.
+You MUST go through the SoftDevice SVC calls:
+
+    sd_power_gpregret_clr(id, 0xFF);
+    sd_power_gpregret_set(id, magic);
+    sd_power_gpregret_get(id, &out);
+
+where id = 0 → GPREGRET, id = 1 → GPREGRET2. Upstream main-
+nrf52.cpp uses exactly this pattern for the LFS-corrupt and
+DFU-skip magics. We mirror it for the auto-switch override
+magic, and only fall back to the direct register access if
+the SoftDevice call returns != NRF_SUCCESS (which happens
+e.g. when the SoftDevice isn't initialised yet — early boot).
+
+So the full rule for "retained across soft reset, cleared on
+power cycle" on nRF52 + SoftDevice is:
+  - Use GPREGRET / GPREGRET2 (hardware-retained register).
+  - Access them via sd_power_gpregret_* (SoftDevice gateway).
+  - Fall back to direct NRF_POWER->... only when the SVC call
+    fails.
+
+Translated:
+  "hardware-guaranteed" was right about the silicon, but
+  understated the software stack on top of it. The combination
+  hardware register + SoftDevice gateway is what's actually
+  reliable.
+
 
 2026-05-24  Stage 2 — effectiveConfiguredTxPower() helper
 ---------------------------------------------------------

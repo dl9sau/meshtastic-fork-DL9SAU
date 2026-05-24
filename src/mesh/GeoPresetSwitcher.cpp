@@ -29,13 +29,27 @@ static constexpr uint8_t AUTO_OVERRIDE_MAGIC = 0xA5;
 
 #if defined(ARCH_NRF52)
 #include <nrf.h>
+#include <nrf_soc.h>
+// On nRF52 with an active SoftDevice, direct writes to NRF_POWER->GPREGRET
+// registers are masked — you must go through the SoftDevice SVC calls. The
+// gpregret_id argument selects which register: 0 = GPREGRET, 1 = GPREGRET2.
+// (Upstream main-nrf52.cpp uses the same pattern for the LFS-corrupt and
+// DFU-skip magics on GPREGRET.)
 static inline void writeOverrideMagic(uint8_t v)
 {
-    NRF_POWER->GPREGRET2 = v;
+    if (sd_power_gpregret_clr(1, 0xFF) != NRF_SUCCESS || sd_power_gpregret_set(1, v) != NRF_SUCCESS) {
+        // SoftDevice not initialised — direct register access is the right
+        // fallback in that case.
+        NRF_POWER->GPREGRET2 = v;
+    }
 }
 static inline uint8_t readOverrideMagic()
 {
-    return (uint8_t)NRF_POWER->GPREGRET2;
+    uint32_t v = 0;
+    if (sd_power_gpregret_get(1, &v) != NRF_SUCCESS) {
+        v = NRF_POWER->GPREGRET2;
+    }
+    return (uint8_t)v;
 }
 #elif defined(ARCH_ESP32)
 RTC_NOINIT_ATTR static uint8_t s_autoModeOverrideMagic;
