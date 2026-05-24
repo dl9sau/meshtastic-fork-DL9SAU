@@ -306,44 +306,59 @@ TODO — Stage 4: dual-preset position beacon for lost-device recovery
 Goal:
 For roles ≤ CLIENT (i.e. CLIENT, CLIENT_BASE, CLIENT_MUTE, SENSOR,
 TRACKER, TAK_TRACKER), if the device is currently running a non-
-standard modem preset (any preset where SF or BW differ from
-LongFast — CR is irrelevant), each scheduled position beacon is
-followed by a second beacon sent on LongFast.
+LongFast modem preset (any preset where SF or BW differ from
+LongFast — CR is irrelevant), emit an *occasional* additional
+position beacon on LongFast.
 
 Rationale: if you lose the device while travelling on MediumFast,
-the LongFast beacon increases the chance that *any* random
-Meshtastic node within range can hear it and forward your position
-to your phone via MQTT / the public network.
+a LongFast beacon increases the chance that *any* random
+Meshtastic node within range — they typically default to LongFast
+— can hear it and forward your position to your phone via MQTT /
+the public network. This is a "sign of life on the mainland
+preset", not a real-time position track.
+
+Cadence (refined 2026-05-24):
+The LongFast beacon is opportunistic, hooked onto the normal
+position-broadcast path. Each time we are about to send a normal
+position, check whether the last LongFast beacon went out more
+than 1 hour ago. If yes, also emit the LongFast variant; if no,
+skip it for this round. With the default position broadcast
+interval, this naturally amortises to about one LongFast beacon
+per hour while we are reporting, and stops entirely once we go
+quiet. That keeps the "radio is blind to home-preset RX during
+LongFast TX" window to ≤ 1 short burst per hour.
 
 Implementation sketch:
-1. Detect "non-standard" preset: SF != 11 || BW != 250 kHz when
+1. Detect "non-LongFast" preset: SF != 11 || BW != 250 kHz when
    use_preset=true; same check via the explicit fields otherwise.
    See modemPresetToParams() in MeshRadio.h for the LongFast
    reference values.
-2. Right after sendOurPosition() finishes (or just before, with
-   the same packet), enqueue a duplicate position packet flagged
-   for LongFast transmission.
+2. PositionModule keeps a uint32_t lastLongFastBeaconMs. In the
+   path that sends our position, if (millis() - lastLongFastBeaconMs
+   > 3600000), also enqueue a duplicate position packet flagged
+   for LongFast transmission, and update the timestamp.
 3. Honor that flag in RadioLibInterface::startSend(): if the
-   packet carries a temporary "force-preset" override, call a
-   full radio reconfigure() with the LongFast SF/BW/CR before
-   startTransmit, then restore the original config afterwards.
+   packet carries a "force-preset" override (the third per-packet
+   override on top of Stage-2's CR + TX-power), call a full radio
+   reconfigure() with the LongFast SF/BW/CR before startTransmit,
+   then reconfigure() back to the home preset afterwards.
 4. Backends touched: same as Stage 2 (RF95 / SX126x / SX128x /
    LR11x0 / SimRadio). The reconfigure path is more invasive
-   than CR/power-only because BW and SF affect timing.
+   than CR/power-only because BW and SF affect timing — but
+   given the once-per-hour cadence this is acceptable.
 
 Caveats:
-* Reconfiguring BW/SF takes longer than CR/power and puts the
-  radio out-of-mesh for the duration of the LongFast TX — RX of
-  packets on the home preset is blind during that window. Keep
-  the dual-mode beacon strictly rate-limited (e.g. at most every
-  N minutes, possibly only when moving / battery healthy).
-* The LongFast beacon should carry the same packet contents
-  (precision-clamped position, sender, NodeInfo if appropriate)
-  so a finder can act on it without needing the home channel PSK.
-  Consider sending it on the default (empty-name → "LongFast")
-  channel with the default PSK so anyone can decode it.
-* This wants to integrate with the position_precision logic so
-  the LongFast beacon doesn't leak an exact location either.
+* Reconfiguring BW/SF puts the radio out-of-mesh for the
+  duration of the LongFast TX (~1–3 s for one Position packet)
+  — RX of packets on the home preset is blind during that window.
+  With ≤ 1 occurrence per hour this is a non-issue.
+* The LongFast beacon should be sent on the default channel
+  (empty-name → "LongFast" via the dynamic getName() fallback)
+  with the default PSK so that *any* finder can decode it
+  without sharing the home channel.
+* Apply position_precision exactly as for the normal beacon —
+  the LongFast variant must not leak a finer location than the
+  user is already comfortable broadcasting on the home channel.
 * Stage 4 logically depends on Stage 2 plumbing (per-packet
   radio override fields) — do Stage 2 first.
 
