@@ -102,31 +102,36 @@ void GeoPresetSwitcher::evaluate()
     if (localPosition.latitude_i == 0 && localPosition.longitude_i == 0)
         return;
 
+    // Pick the target preset: matching region, or LongFast as the fallback
+    // when the device sits outside all known regions. The fallback ensures
+    // someone driving out of e.g. Berlin gets switched back to the global
+    // default rather than staying on MediumFast forever.
     const Region *target = findRegionFor(localPosition.latitude_i, localPosition.longitude_i);
-    if (!target)
-        return;
+    const meshtastic_Config_LoRaConfig_ModemPreset targetPreset =
+        target ? target->preset : meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+    const char *targetName = target ? target->name : "outside-all-regions";
 
-    if (target->preset == config.lora.modem_preset)
+    if (targetPreset == config.lora.modem_preset)
         return; // already on the right preset
 
-    LOG_INFO("GeoPresetSwitcher: entering region '%s', switching modem preset %d -> %d", target->name,
-             (int)config.lora.modem_preset, (int)target->preset);
-    triggerSwitch(*target);
+    LOG_INFO("GeoPresetSwitcher: region '%s', switching modem preset %d -> %d", targetName, (int)config.lora.modem_preset,
+             (int)targetPreset);
+    triggerSwitch(targetPreset);
 }
 
-void GeoPresetSwitcher::triggerSwitch(const Region &target)
+void GeoPresetSwitcher::triggerSwitch(meshtastic_Config_LoRaConfig_ModemPreset newPreset)
 {
     // Mark in-progress so AdminModule doesn't misread our own config write
     // as a user override.
     autoSwitchInProgress = true;
 
-    config.lora.modem_preset = target.preset;
+    config.lora.modem_preset = newPreset;
     // Mirror the preset's bandwidth/SF/CR back into the explicit fields, same
     // as AdminModule does — keeps the iOS app happy after the auto-switch.
     if (myRegion) {
         float presetBwKHz = 0;
         uint8_t presetSf = 0, presetCr = 0;
-        modemPresetToParams(target.preset, myRegion->wideLora, presetBwKHz, presetSf, presetCr);
+        modemPresetToParams(newPreset, myRegion->wideLora, presetBwKHz, presetSf, presetCr);
         config.lora.bandwidth = bwKHzToCode(presetBwKHz);
         config.lora.spread_factor = presetSf;
         if (config.lora.coding_rate < LORA_CR_MIN || config.lora.coding_rate > LORA_CR_MAX) {
@@ -135,7 +140,7 @@ void GeoPresetSwitcher::triggerSwitch(const Region &target)
     }
 
     int saveWhat = SEGMENT_CONFIG;
-    if (channels.renamePrimaryForPresetChange(target.preset))
+    if (channels.renamePrimaryForPresetChange(newPreset))
         saveWhat |= SEGMENT_CHANNELS;
 
     service->reloadConfig(saveWhat);

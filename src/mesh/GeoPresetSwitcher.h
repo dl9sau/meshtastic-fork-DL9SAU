@@ -53,7 +53,7 @@ class GeoPresetSwitcher
   private:
     bool prerequisitesOk() const;
     const Region *findRegionFor(int32_t lat_i, int32_t lon_i) const;
-    void triggerSwitch(const Region &target);
+    void triggerSwitch(meshtastic_Config_LoRaConfig_ModemPreset newPreset);
 
     uint32_t lastEvaluateMs = 0;
     uint32_t lastSwitchMs = 0;

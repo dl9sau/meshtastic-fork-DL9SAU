@@ -4,6 +4,24 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-24  Stage 3 refinement: outside-all-regions fallback = LongFast
+-----------------------------------------------------------------------
+Originally GeoPresetSwitcher only fired a switch when the local
+position landed inside one of the hardcoded bounding boxes; outside
+all boxes it did nothing. Field testing showed the natural mental
+model is "drive into Berlin → MediumFast, drive out → LongFast".
+
+GeoPresetSwitcher::evaluate() now treats any position outside all
+known regions as "target = LongFast" and switches accordingly. The
+user-override magic still applies: anyone who *manually* picks
+e.g. MediumFast outside a region will stay there until power-cycle,
+even though Auto would otherwise force LongFast. We deliberately
+keep the override in noinit RAM (= cleared by power cycle) instead
+of persisting it to flash; a persistent override would require
+explicit reset via admin action or backup-restore, which the user
+finds too cumbersome.
+
+
 2026-05-24  Force CR=8 over CR=5
 --------------------------------
 DL9SAU prefers the more redundant 4/8 coding rate even on fast modem
