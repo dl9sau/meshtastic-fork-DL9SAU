@@ -240,18 +240,45 @@ B) Repeat traffic (we relay someone else's packet) — only relevant
    repeat as "user" nodes; REPEATER / ROUTER / ROUTER_LATE etc. are
    intentionally unchanged):
 
-   B1) Drop-filter — we refuse to repeat at all:
-       * Telemetry packets (decoded.portnum == TELEMETRY_APP).
-       * Packets we couldn't decode (foreign channel / wrong PSK,
-         i.e. which_payload_variant != decoded_tag, or any payload
-         that survived perhapsDecode without success).
-       Everything else is repeated (with reduced power per B2).
-       In particular NODEINFO_APP (identity broadcast — needed so
-       other nodes know who we are) and NEIGHBORINFO_APP (the
-       opt-in topology / map-plot data from the NeighborInfo
-       module) are *not* dropped. NeighborInfo is filtered out
-       upstream by Router.cpp anyway when the receiving node has
-       the module disabled, so we don't need to second-guess.
+   B1) Drop-filter — we refuse to repeat at all. The repeat
+       whitelist is the upstream CORE_PORTNUMS_ONLY core list
+       MINUS telemetry. Everything else is dropped:
+
+       Repeat whitelist (these portnums pass the filter):
+         * TEXT_MESSAGE_APP
+         * TEXT_MESSAGE_COMPRESSED_APP
+         * POSITION_APP
+         * NODEINFO_APP
+         * ROUTING_APP
+         * ADMIN_APP
+         * ALERT_APP
+         * KEY_VERIFICATION_APP
+         * WAYPOINT_APP
+         * STORE_FORWARD_APP
+         * TRACEROUTE_APP
+         * STORE_FORWARD_PLUSPLUS_APP
+
+       Drop unconditionally:
+         * TELEMETRY_APP (explicitly removed from the whitelist —
+           per-node telemetry has no value when relayed by a
+           client; the upstream node will just receive the data
+           once from its own neighbour layer).
+         * Anything else (non-core portnums: NEIGHBOR_INFO,
+           RANGE_TEST, ATAK_PLUGIN/FORWARDER, PAXCOUNTER, SERIAL,
+           IP_TUNNEL, AUDIO, DETECTION_SENSOR, etc.). Same
+           rationale: as a client tracker we don't propagate
+           experimental / niche-app traffic for others.
+         * Packets we couldn't decode (which_payload_variant !=
+           decoded_tag after perhapsDecode), i.e. foreign-channel
+           / wrong-PSK traffic and packets that survived decode
+           without success.
+
+       This matches upstream's CORE_PORTNUMS_ONLY filter in
+       intent but is stricter (drops telemetry) and is applied
+       unconditionally for roles CLIENT / CLIENT_BASE, not via
+       rebroadcast_mode config. Users who want NEIGHBOR_INFO or
+       experimental modules propagated can run a REPEATER /
+       ROUTER role.
 
    B2) Default repeat power/CR — for everything that does pass the
        filter:
