@@ -75,4 +75,35 @@ class FloodingRouter : public Router
 
     // Return true if we are a rebroadcaster
     bool isRebroadcaster();
+
+    /**
+     * DL9SAU Stage 2: apply the CLIENT / CLIENT_BASE repeat policy to a
+     * packet that is about to be rebroadcast. Decision tree:
+     *
+     *   - Role != CLIENT and != CLIENT_BASE
+     *       → return true, no modification (vanilla rebroadcast behaviour
+     *         for repeater / router / router-late).
+     *
+     *   - B1 (drop) — return false to refuse rebroadcast:
+     *       * Undecoded (which_payload_variant != decoded_tag)
+     *       * portnum == TELEMETRY_APP
+     *       * portnum not in the core repeat-whitelist
+     *         (= upstream CORE_PORTNUMS_ONLY core list)
+     *
+     *   - B3 (exception, full configured power + CR):
+     *       * portnum == TRACEROUTE_APP
+     *       * portnum == ROUTING_APP
+     *       * direct-DM where we are next_hop AND p->to is a NodeDB
+     *         entry with has_hops_away && hops_away == 0 && last_heard
+     *         within the last 12 h.
+     *       → return true, no override set.
+     *
+     *   - B2 (default): set tx_cr_override=5,
+     *         tx_power_override = max(config.lora.tx_power - 6, 10).
+     *       → return true.
+     *
+     * @return true to proceed with rebroadcast (possibly with overrides),
+     *         false to abort the rebroadcast.
+     */
+    bool applyClientRepeatPolicy(meshtastic_MeshPacket *tosend);
 };

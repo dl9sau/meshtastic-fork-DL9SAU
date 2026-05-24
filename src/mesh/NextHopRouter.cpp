@@ -147,6 +147,15 @@ bool NextHopRouter::perhapsRebroadcast(const meshtastic_MeshPacket *p)
                     }
 #endif
 
+                    // DL9SAU Stage 2: apply CLIENT / CLIENT_BASE repeat policy.
+                    // The helper may drop the packet (B1) or stamp per-packet
+                    // CR / power overrides for the reduced "client repeat"
+                    // modulation (B2). Other roles see no change.
+                    if (!applyClientRepeatPolicy(tosend)) {
+                        packetPool.release(tosend);
+                        return false;
+                    }
+
                     if (p->next_hop == NO_NEXT_HOP_PREFERENCE) {
                         FloodingRouter::send(tosend);
                     } else {

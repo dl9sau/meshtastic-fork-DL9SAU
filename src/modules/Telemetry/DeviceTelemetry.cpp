@@ -192,6 +192,18 @@ bool DeviceTelemetryModule::sendTelemetry(NodeNum dest, bool phoneOnly)
     p->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
     // DL9SAU: own telemetry is direct-neighbor only (no rebroadcast)
     p->hop_limit = 0;
+    // DL9SAU Stage 2: CR=5 and power -6 dB (min 10 dBm) regardless of
+    // global LoRa config. Telemetry is heartbeat data — neighbours
+    // that hear us at all hear us at lower power too.
+    p->has_tx_cr_override = true;
+    p->tx_cr_override = 5;
+    p->has_tx_power_override = true;
+    {
+        int8_t pwr = (int8_t)config.lora.tx_power - 6;
+        if (pwr < 10)
+            pwr = 10;
+        p->tx_power_override = pwr;
+    }
 
     nodeDB->updateTelemetry(nodeDB->getNodeNum(), telemetry, RX_SRC_LOCAL);
     if (phoneOnly) {

@@ -1,6 +1,7 @@
 #include "FloodingRouter.h"
 #include "MeshTypes.h"
 #include "NodeDB.h"
+#include "RTC.h"
 #include "configuration.h"
 #include "mesh-pb-constants.h"
 #include "meshUtils.h"
@@ -156,6 +157,74 @@ bool FloodingRouter::isRebroadcaster()
 {
     return config.device.role != meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE &&
            config.device.rebroadcast_mode != meshtastic_Config_DeviceConfig_RebroadcastMode_NONE;
+}
+
+bool FloodingRouter::applyClientRepeatPolicy(meshtastic_MeshPacket *tosend)
+{
+    // Stage 2 policy only applies to the two "user" client roles. Other
+    // roles (REPEATER, ROUTER, ROUTER_LATE, ...) keep upstream behaviour.
+    const meshtastic_Config_DeviceConfig_Role role = config.device.role;
+    if (role != meshtastic_Config_DeviceConfig_Role_CLIENT &&
+        role != meshtastic_Config_DeviceConfig_Role_CLIENT_BASE) {
+        return true;
+    }
+
+    // B1 drop: refuse to repeat anything we couldn't decode.
+    if (tosend->which_payload_variant != meshtastic_MeshPacket_decoded_tag) {
+        LOG_DEBUG("DL9SAU B1: drop rebroadcast of undecoded packet 0x%08x", tosend->id);
+        return false;
+    }
+
+    const meshtastic_PortNum portnum = tosend->decoded.portnum;
+
+    // B1 drop: refuse telemetry explicitly even though it's "core".
+    if (portnum == meshtastic_PortNum_TELEMETRY_APP) {
+        LOG_DEBUG("DL9SAU B1: drop rebroadcast of telemetry 0x%08x", tosend->id);
+        return false;
+    }
+
+    // B1 drop: refuse anything outside the core repeat-whitelist (matches
+    // upstream's CORE_PORTNUMS_ONLY core list minus telemetry).
+    const bool inWhitelist = IS_ONE_OF(portnum, meshtastic_PortNum_TEXT_MESSAGE_APP,
+                                       meshtastic_PortNum_TEXT_MESSAGE_COMPRESSED_APP, meshtastic_PortNum_POSITION_APP,
+                                       meshtastic_PortNum_NODEINFO_APP, meshtastic_PortNum_ROUTING_APP,
+                                       meshtastic_PortNum_ADMIN_APP, meshtastic_PortNum_ALERT_APP,
+                                       meshtastic_PortNum_KEY_VERIFICATION_APP, meshtastic_PortNum_WAYPOINT_APP,
+                                       meshtastic_PortNum_STORE_FORWARD_APP, meshtastic_PortNum_TRACEROUTE_APP,
+                                       meshtastic_PortNum_STORE_FORWARD_PLUSPLUS_APP);
+    if (!inWhitelist) {
+        LOG_DEBUG("DL9SAU B1: drop rebroadcast of non-core portnum %d (id 0x%08x)", (int)portnum, tosend->id);
+        return false;
+    }
+
+    // B3 exceptions — repeat at full configured power and configured CR.
+    // TRACEROUTE_APP and ROUTING_APP must remain debug-grade reliable.
+    if (portnum == meshtastic_PortNum_TRACEROUTE_APP || portnum == meshtastic_PortNum_ROUTING_APP) {
+        return true;
+    }
+    // Direct-DM where we are the requested next_hop AND the destination is
+    // one of our known direct neighbours within the last 12 h.
+    const uint8_t ourRelayId = nodeDB ? nodeDB->getLastByteOfNodeNum(getNodeNum()) : 0;
+    if (!isBroadcast(tosend->to) && tosend->next_hop != NO_NEXT_HOP_PREFERENCE && tosend->next_hop == ourRelayId && nodeDB) {
+        const meshtastic_NodeInfoLite *dst = nodeDB->getMeshNode(tosend->to);
+        if (dst && dst->has_hops_away && dst->hops_away == 0) {
+            const uint32_t now = getValidTime(RTCQualityFromNet);
+            constexpr uint32_t TWELVE_HOURS = 12UL * 60UL * 60UL;
+            if (now != 0 && dst->last_heard != 0 && (now - dst->last_heard) <= TWELVE_HOURS) {
+                return true; // B3 direct-DM exception
+            }
+        }
+    }
+
+    // B2 default: CR=5, TX-power = configured - 6 dB (floor 10 dBm).
+    tosend->has_tx_cr_override = true;
+    tosend->tx_cr_override = 5;
+    tosend->has_tx_power_override = true;
+    int8_t pwr = (int8_t)config.lora.tx_power - 6;
+    if (pwr < 10)
+        pwr = 10;
+    tosend->tx_power_override = pwr;
+    return true;
 }
 
 void FloodingRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtastic_Routing *c)

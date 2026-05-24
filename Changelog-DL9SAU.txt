@@ -4,6 +4,57 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-24  Stage 2 activation — per-packet CR / power overrides live
+---------------------------------------------------------------------
+The Stage 2 plumbing committed earlier is now driven from the actual
+sender / relay sites. Verified field-build clean.
+
+A) Own outgoing traffic:
+   * PositionModule::sendOurPosition stamps tx_cr_override=5 (no
+     power override — position must remain reachable).
+   * DeviceTelemetry, EnvironmentTelemetry, HealthTelemetry,
+     AirQualityTelemetry, PowerTelemetry stamp:
+       tx_cr_override = 5
+       tx_power_override = max(config.lora.tx_power - 6, 10)
+     (in addition to the existing hop_limit=0 from Stage 1).
+
+B) Relay path — FloodingRouter::applyClientRepeatPolicy:
+   * Helper called from NextHopRouter::perhapsRebroadcast right
+     before send. Decision tree:
+
+       Role != CLIENT && role != CLIENT_BASE
+         → return true, no change (vanilla relay behaviour
+           preserved for REPEATER / ROUTER / ROUTER_LATE / etc.)
+
+       B1 drop (return false → packet pool release, no TX):
+         • which_payload_variant != decoded_tag (undecodable)
+         • portnum == TELEMETRY_APP
+         • portnum not in core repeat-whitelist:
+             TEXT_MESSAGE_APP, TEXT_MESSAGE_COMPRESSED_APP,
+             POSITION_APP, NODEINFO_APP, ROUTING_APP, ADMIN_APP,
+             ALERT_APP, KEY_VERIFICATION_APP, WAYPOINT_APP,
+             STORE_FORWARD_APP, TRACEROUTE_APP,
+             STORE_FORWARD_PLUSPLUS_APP.
+
+       B3 exception (return true, no override):
+         • portnum == TRACEROUTE_APP
+         • portnum == ROUTING_APP
+         • direct-DM where next_hop == us AND p->to has
+           has_hops_away && hops_away == 0 && last_heard within
+           the last 12 h.
+
+       B2 default (return true with overrides):
+         tx_cr_override = 5
+         tx_power_override = max(config.lora.tx_power - 6, 10)
+
+Implementation footprint:
+   src/modules/PositionModule.cpp
+   src/modules/Telemetry/{Device,Environment,Health,
+                          AirQuality,Power}Telemetry.cpp
+   src/mesh/FloodingRouter.{h,cpp}   (new helper)
+   src/mesh/NextHopRouter.cpp        (calls the helper)
+
+
 2026-05-24  Stage 2 plumbing — per-packet CR / TX-power override fields
 -----------------------------------------------------------------------
 Lays the infrastructure for Stage 2 / 4 without enabling any new

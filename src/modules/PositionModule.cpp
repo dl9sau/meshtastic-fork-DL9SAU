@@ -381,6 +381,12 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
         p->hop_limit = current > POSITION_HOP_CAP ? POSITION_HOP_CAP : current;
     }
 
+    // DL9SAU Stage 2: send our own position with CR=5 regardless of the
+    // global LoRa config. TX-power is left at the configured value (no
+    // override) — position must remain reachable.
+    p->has_tx_cr_override = true;
+    p->tx_cr_override = 5;
+
     service->sendToMesh(p, RX_SRC_LOCAL, true);
 
     if (IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TRACKER,
