@@ -54,6 +54,36 @@ Implementation footprint:
    src/mesh/FloodingRouter.{h,cpp}   (new helper)
    src/mesh/NextHopRouter.cpp        (calls the helper)
 
+Observable behaviour summary:
+
+  +---------------------------------+--------------------+----------------------------------+
+  | Action                          | Vanilla upstream   | DL9SAU after Stage 2             |
+  +---------------------------------+--------------------+----------------------------------+
+  | Send own Position               | configured CR/pwr  | CR=5, pwr unchanged              |
+  | Send own Telemetry              | configured CR/pwr  | CR=5, pwr = conf-6 dB (>= 10)    |
+  | Relay Telemetry (CLIENT)        | repeated full pwr  | dropped                          |
+  | Relay undecodable (CLIENT)      | repeated full pwr  | dropped                          |
+  | Relay non-core portnums         | repeated full pwr  | dropped                          |
+  |  (PaxCounter / RangeTest / ATAK |                    |                                  |
+  |   / NEIGHBOR_INFO / ...)        |                    |                                  |
+  | Relay TRACEROUTE / ROUTING      | configured CR/pwr  | configured CR/pwr (B3 except)    |
+  | Relay direct-DM to 12 h-known   | configured CR/pwr  | configured CR/pwr (B3 except)    |
+  |  direct neighbour where         |                    |                                  |
+  |  next_hop == us                 |                    |                                  |
+  | Relay other whitelisted traffic | configured CR/pwr  | CR=5, pwr = conf-6 dB (>= 10)    |
+  |  (TEXT, POSITION, NODEINFO,     |                    |                                  |
+  |   WAYPOINT, KEY_VERIFICATION,   |                    |                                  |
+  |   STORE_FORWARD, ADMIN, ALERT)  |                    |                                  |
+  | Relay as REPEATER / ROUTER /    | configured CR/pwr  | configured CR/pwr (unchanged —   |
+  |  ROUTER_LATE etc.               |                    |  policy only applies to CLIENT/  |
+  |                                 |                    |  CLIENT_BASE)                    |
+  +---------------------------------+--------------------+----------------------------------+
+
+  Power example (T1000-E / EU868):
+    conf = 22 dBm  ->  override = 22-6 = 16 dBm
+    conf = 14 dBm  ->  override = 14-6 = 8 -> floor 10 dBm
+    conf = 10 dBm  ->  override = 10-6 = 4 -> floor 10 dBm
+
 
 2026-05-24  Stage 2 plumbing — per-packet CR / TX-power override fields
 -----------------------------------------------------------------------
