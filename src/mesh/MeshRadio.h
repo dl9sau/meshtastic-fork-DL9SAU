@@ -191,23 +191,26 @@ static inline float modemPresetToBwKHz(meshtastic_Config_LoRaConfig_ModemPreset 
 }
 
 /**
- * DL9SAU: Reverse lookup — given a (bw, sf, cr) triple, return the modem
- * preset that produces those parameters, or MODEM_PRESET_END if no preset
- * matches. Used by AdminModule to keep the primary channel name in sync
- * even when the user picked SF/BW manually (use_preset=false) but the
- * values happen to coincide with a known preset (e.g. iOS app writes
- * SF=9/BW=250 instead of just selecting MediumFast).
+ * DL9SAU: Reverse lookup — given (bw, sf), return the modem preset that
+ * produces those parameters, or MODEM_PRESET_END if no preset matches.
+ * Used by AdminModule to keep the primary channel name in sync even when
+ * the user picked SF/BW manually (use_preset=false) but the values happen
+ * to coincide with a known preset (e.g. iOS app writes SF=9/BW=250
+ * instead of just selecting MediumFast).
  *
- * BW is compared with a small tolerance because the firmware stores it
- * with limited precision (bwKHzToCode round-trips).
+ * Note: CR is intentionally ignored. No two presets in the table share
+ * the same (BW, SF) but differ in CR, so CR carries no preset-identity
+ * information; ignoring it also lets DL9SAU's "force CR=8" rule
+ * coexist with this lookup. BW is compared with a small tolerance
+ * because the firmware stores it through bwCodeToKHz round-trips.
  */
-static inline meshtastic_Config_LoRaConfig_ModemPreset modemPresetForParams(float bwKHz, uint8_t sf, uint8_t cr, bool wideLora)
+static inline meshtastic_Config_LoRaConfig_ModemPreset modemPresetForParams(float bwKHz, uint8_t sf, bool wideLora)
 {
     for (int p = _meshtastic_Config_LoRaConfig_ModemPreset_MIN; p <= _meshtastic_Config_LoRaConfig_ModemPreset_MAX; ++p) {
         float pBw = 0;
         uint8_t pSf = 0, pCr = 0;
         modemPresetToParams((meshtastic_Config_LoRaConfig_ModemPreset)p, wideLora, pBw, pSf, pCr);
-        if (pSf == sf && pCr == cr) {
+        if (pSf == sf) {
             float diff = pBw - bwKHz;
             if (diff < 0)
                 diff = -diff;

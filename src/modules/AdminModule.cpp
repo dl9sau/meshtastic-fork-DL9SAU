@@ -888,6 +888,19 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
             }
         }
 
+        // DL9SAU: prefer CR=8 over CR=5. The user runs the more redundant
+        // 4/8 coding rate even on fast modem presets. The slow presets
+        // (LongSlow, LongModerate, LongTurbo) already default to CR=8, so
+        // this rule effectively rewrites CR for LongFast / Medium* /
+        // Short* (which default to CR=5). CR=6 and CR=7 entered by the
+        // user are honoured as-is. The radio honours a custom CR in
+        // [LORA_CR_MIN..LORA_CR_MAX] even with use_preset=true (see
+        // RadioInterface::applyModemConfig), so this works for both
+        // preset and custom configurations.
+        if (config.lora.coding_rate == 5) {
+            config.lora.coding_rate = 8;
+        }
+
         // Auto-rename the primary channel when the *effective* modem preset
         // changes. Effective preset = config.lora.modem_preset when
         // use_preset=true, or the preset matching SF/BW/CR otherwise. This
@@ -898,14 +911,12 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
         // auto-switcher can reuse it.
         const bool wideLora = myRegion ? myRegion->wideLora : false;
         const meshtastic_Config_LoRaConfig_ModemPreset oldEffective =
-            oldLoraConfig.use_preset
-                ? oldLoraConfig.modem_preset
-                : modemPresetForParams(bwCodeToKHz(oldLoraConfig.bandwidth), oldLoraConfig.spread_factor,
-                                       oldLoraConfig.coding_rate, wideLora);
+            oldLoraConfig.use_preset ? oldLoraConfig.modem_preset
+                                     : modemPresetForParams(bwCodeToKHz(oldLoraConfig.bandwidth),
+                                                            oldLoraConfig.spread_factor, wideLora);
         const meshtastic_Config_LoRaConfig_ModemPreset newEffective =
             config.lora.use_preset ? config.lora.modem_preset
-                                   : modemPresetForParams(bwCodeToKHz(config.lora.bandwidth), config.lora.spread_factor,
-                                                          config.lora.coding_rate, wideLora);
+                                   : modemPresetForParams(bwCodeToKHz(config.lora.bandwidth), config.lora.spread_factor, wideLora);
         if (oldEffective != newEffective && newEffective != MODEM_PRESET_END) {
             if (channels.renamePrimaryForPresetChange(newEffective)) {
                 changes |= SEGMENT_CHANNELS;

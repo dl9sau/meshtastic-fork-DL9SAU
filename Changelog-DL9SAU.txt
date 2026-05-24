@@ -4,6 +4,28 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-24  Force CR=8 over CR=5
+--------------------------------
+DL9SAU prefers the more redundant 4/8 coding rate even on fast modem
+presets. AdminModule's LoRa-config handler now rewrites coding_rate
+from 5 to 8 whenever it would otherwise stick at 5. CR=6 and CR=7
+entered by the user are honoured as-is. CR=8 is unchanged (the long-
+range presets — LongSlow, LongModerate, LongTurbo — already default
+to it).
+
+Implementation detail: RadioInterface::applyModemConfig honours a
+custom coding_rate in [LORA_CR_MIN..LORA_CR_MAX] even when
+use_preset=true, so the rule works uniformly for both preset and
+custom configurations.
+
+Side change to modemPresetForParams() in MeshRadio.h: CR is no
+longer part of the reverse-lookup key — only BW and SF. Without
+this, the new CR=5→8 rewrite would break the "rename primary
+channel after custom config matches a preset" feature from round 2.
+No two presets in the table share the same (BW, SF) but differ in
+CR, so dropping CR from the match is loss-free.
+
+
 2026-05-24  iOS app round 2 — BW picker + channel rename on custom mode
 -----------------------------------------------------------------------
 Two more iOS-specific quirks reported while testing the Stage-1 fixes:
