@@ -1,4 +1,5 @@
 #include "FloodingRouter.h"
+#include "MeshRadio.h"
 #include "MeshTypes.h"
 #include "NodeDB.h"
 #include "RTC.h"
@@ -220,10 +221,7 @@ bool FloodingRouter::applyClientRepeatPolicy(meshtastic_MeshPacket *tosend)
     tosend->has_tx_cr_override = true;
     tosend->tx_cr_override = 5;
     tosend->has_tx_power_override = true;
-    int8_t pwr = (int8_t)config.lora.tx_power - 6;
-    if (pwr < 10)
-        pwr = 10;
-    tosend->tx_power_override = pwr;
+    tosend->tx_power_override = reducedTxPowerForStage2();
     return true;
 }
 

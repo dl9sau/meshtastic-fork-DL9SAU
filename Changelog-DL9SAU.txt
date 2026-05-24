@@ -4,6 +4,74 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-24  Fix Stage 3 user-override on nRF52 + tx-power resolver
+------------------------------------------------------------------
+Field test showed the Stage 3 user-override magic word was NOT
+surviving the firmware-driven soft reboot on nRF52 (T1000-E).
+Reproduction: manually switch from LongFast to MediumFast → reboot
+(intentional, LoRa-config change) → ~20 min later the device
+silently rebooted again and switched back to LongFast. That's
+exactly the failure mode the magic word was supposed to prevent.
+
+Root cause:
+  Our magic lived in plain `.noinit` RAM
+  (__attribute__((section(".noinit")))). On nRF52 with SoftDevice
+  the Adafruit bootloader / C runtime appears to zero that RAM at
+  boot, so the magic was lost. `.noinit` is not hardware-retention,
+  it's just "C runtime won't touch this". If anything else does
+  (bootloader, SD), the contract is broken.
+
+Fix — platform-specific hardware-retention registers:
+  * nRF52 (T1000-E): use NRF_POWER->GPREGRET2 (8-bit register).
+    GPREGRET is already used in upstream code for
+    NRF52_MAGIC_LFS_IS_CORRUPT and DFU_MAGIC_SKIP; GPREGRET2 is
+    free. Both are hardware-guaranteed to retain across
+    NVIC_SystemReset and hardware-guaranteed to clear on power-on
+    / pin reset. Perfect semantics, zero CRT involvement.
+  * ESP32 (Heltec Wireless Tracker etc.): RTC_NOINIT_ATTR places
+    the variable in RTC slow memory, which on Espressif silicon
+    is the same kind of "retained across reset, cleared on
+    power-on" memory. Kept as-is — the bug was nRF52-specific.
+  * Other platforms: still .noinit best-effort. Portduino has no
+    real need for this.
+
+Magic value shrunk from 32-bit to 8-bit because GPREGRET2 is 8-bit
+wide. AUTO_OVERRIDE_MAGIC = 0xA5.
+
+Additionally added a one-time boot log so the user can confirm
+the magic survived: GeoPresetSwitcher logs the initial magic
+value the first time evaluate() is called after boot.
+
+Lesson kept here for future reference: when you want "retained
+across soft reset, cleared on power cycle" RAM on a platform
+that has SoftDevices / bootloaders touching memory at boot,
+.noinit alone is NOT enough. Use the platform's hardware
+retention register / RTC slow memory. The two natural pairs are:
+  - nRF52: NRF_POWER->GPREGRET / GPREGRET2
+  - ESP32: RTC_NOINIT_ATTR
+
+
+2026-05-24  Stage 2 — effectiveConfiguredTxPower() helper
+---------------------------------------------------------
+Stage 2's "configured TX power − 6 dB, floor 10 dBm" derivation
+previously read config.lora.tx_power literally. When the user
+leaves that at 0 ("use region default"), upstream
+RadioInterface::applyModemConfig resolves it to myRegion->
+powerLimit (and a final fallback of 17 dBm), so the device
+actually transmits at e.g. 22 dBm — but our Stage 2 code derived
+0 - 6 = -6 → floor 10 dBm. Telemetry and client relays therefore
+went out at 10 dBm even when the device was effectively running
+22 dBm, which is far weaker than intended.
+
+Fix — new inline helper effectiveConfiguredTxPower() in
+MeshRadio.h that mirrors the upstream resolution. A second inline
+reducedTxPowerForStage2() composes it with the -6 dB / floor 10
+formula. Both callers updated:
+  src/modules/Telemetry/{Device,Environment,Health,AirQuality,
+                         Power}Telemetry.cpp
+  src/mesh/FloodingRouter.cpp
+
+
 2026-05-24  Stage 2 activation — per-packet CR / power overrides live
 ---------------------------------------------------------------------
 The Stage 2 plumbing committed earlier is now driven from the actual

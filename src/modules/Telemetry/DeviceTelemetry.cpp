@@ -1,6 +1,7 @@
 #include "DeviceTelemetry.h"
 #include "../mesh/generated/meshtastic/telemetry.pb.h"
 #include "Default.h"
+#include "MeshRadio.h"
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "PowerFSM.h"
@@ -198,12 +199,7 @@ bool DeviceTelemetryModule::sendTelemetry(NodeNum dest, bool phoneOnly)
     p->has_tx_cr_override = true;
     p->tx_cr_override = 5;
     p->has_tx_power_override = true;
-    {
-        int8_t pwr = (int8_t)config.lora.tx_power - 6;
-        if (pwr < 10)
-            pwr = 10;
-        p->tx_power_override = pwr;
-    }
+    p->tx_power_override = reducedTxPowerForStage2();
 
     nodeDB->updateTelemetry(nodeDB->getNodeNum(), telemetry, RX_SRC_LOCAL);
     if (phoneOnly) {

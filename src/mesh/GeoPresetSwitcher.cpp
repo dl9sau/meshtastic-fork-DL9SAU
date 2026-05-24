@@ -8,20 +8,56 @@
 
 GeoPresetSwitcher geoPresetSwitcher;
 
-// noinit RAM that survives a software reboot but not a power cycle / reset
-// pin. AUTO_OVERRIDE_MAGIC is written by AdminModule when the user changes
-// the modem preset manually; the auto-switch reads it and stays out of the
-// way until the next power cycle.
-#if defined(ARCH_ESP32)
-#define DL9SAU_NOINIT_ATTR RTC_NOINIT_ATTR
-#elif defined(__GNUC__) && !defined(ARCH_PORTDUINO)
-#define DL9SAU_NOINIT_ATTR __attribute__((section(".noinit")))
-#else
-#define DL9SAU_NOINIT_ATTR
-#endif
+// User-override magic that survives a software reboot (e.g. the
+// LoRa-config-change reboot) but is cleared by a hardware reset / power
+// cycle. The implementation is platform-specific because plain .noinit
+// RAM is not reliably retained on nRF52 with SoftDevice — the Adafruit
+// bootloader or the C runtime appears to zero the RAM at startup.
+//
+// nRF52: NRF_POWER->GPREGRET2 — hardware-guaranteed retention across
+//        NVIC_SystemReset, hardware-guaranteed zero on power-on / pin
+//        reset. (GPREGRET is already used for DFU_MAGIC_SKIP and
+//        NRF52_MAGIC_LFS_IS_CORRUPT — we use the second register.)
+// ESP32: RTC_NOINIT_ATTR — places the variable in RTC slow memory,
+//        same semantics as GPREGRET2 (survives soft reboot / deep
+//        sleep, undefined after power-on).
+// Other: best-effort .noinit; portduino has no need for this.
+//
+// 8-bit magic is enough — GPREGRET2 is 8 bits wide. Pick a value that
+// doesn't collide with the GPREGRET DFU / LFS markers and isn't 0.
+static constexpr uint8_t AUTO_OVERRIDE_MAGIC = 0xA5;
 
-static DL9SAU_NOINIT_ATTR uint32_t s_autoModeOverrideMagic;
-static constexpr uint32_t AUTO_OVERRIDE_MAGIC = 0xA51A5A51UL;
+#if defined(ARCH_NRF52)
+#include <nrf.h>
+static inline void writeOverrideMagic(uint8_t v)
+{
+    NRF_POWER->GPREGRET2 = v;
+}
+static inline uint8_t readOverrideMagic()
+{
+    return (uint8_t)NRF_POWER->GPREGRET2;
+}
+#elif defined(ARCH_ESP32)
+RTC_NOINIT_ATTR static uint8_t s_autoModeOverrideMagic;
+static inline void writeOverrideMagic(uint8_t v)
+{
+    s_autoModeOverrideMagic = v;
+}
+static inline uint8_t readOverrideMagic()
+{
+    return s_autoModeOverrideMagic;
+}
+#else
+__attribute__((section(".noinit"))) static uint8_t s_autoModeOverrideMagic;
+static inline void writeOverrideMagic(uint8_t v)
+{
+    s_autoModeOverrideMagic = v;
+}
+static inline uint8_t readOverrideMagic()
+{
+    return s_autoModeOverrideMagic;
+}
+#endif
 
 // Cadence: re-check region at most every 20 min; cooldown after a switch
 // is the same 20 min so we don't flap if the user is right on a border.
@@ -50,9 +86,10 @@ static const GeoPresetSwitcher::Region REGION_PRESETS[] = {
 
 void GeoPresetSwitcher::markUserOverride()
 {
-    s_autoModeOverrideMagic = AUTO_OVERRIDE_MAGIC;
-    LOG_INFO("GeoPresetSwitcher: user override engaged (survives soft-reboot, "
-             "clears on power-cycle)");
+    writeOverrideMagic(AUTO_OVERRIDE_MAGIC);
+    LOG_INFO("GeoPresetSwitcher: user override engaged (magic=0x%02x, "
+             "survives soft-reboot, clears on power-cycle)",
+             (unsigned)AUTO_OVERRIDE_MAGIC);
 }
 
 bool GeoPresetSwitcher::prerequisitesOk() const
@@ -64,7 +101,7 @@ bool GeoPresetSwitcher::prerequisitesOk() const
     if (!config.lora.use_preset)
         return false;
     // User override active → stay out of the way.
-    if (s_autoModeOverrideMagic == AUTO_OVERRIDE_MAGIC)
+    if (readOverrideMagic() == AUTO_OVERRIDE_MAGIC)
         return false;
     return true;
 }
@@ -85,7 +122,15 @@ void GeoPresetSwitcher::evaluate()
     const uint32_t now = millis();
 
     // Cadence throttle. lastEvaluateMs=0 lets the first call after boot run
-    // immediately; subsequent calls are throttled.
+    // immediately; subsequent calls are throttled. Also log the initial
+    // override-magic state once per boot so users can confirm the magic
+    // survived a soft reboot.
+    if (lastEvaluateMs == 0) {
+        const uint8_t mg = readOverrideMagic();
+        LOG_INFO("GeoPresetSwitcher: boot — override magic=0x%02x (%s)", (unsigned)mg,
+                 mg == AUTO_OVERRIDE_MAGIC ? "user override ACTIVE, auto-switch disabled until power cycle"
+                                           : "auto-switch armed");
+    }
     if (lastEvaluateMs != 0 && (now - lastEvaluateMs) < EVALUATE_INTERVAL_MS)
         return;
     lastEvaluateMs = now;

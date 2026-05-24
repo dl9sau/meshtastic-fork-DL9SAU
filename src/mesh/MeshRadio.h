@@ -191,6 +191,27 @@ static inline float modemPresetToBwKHz(meshtastic_Config_LoRaConfig_ModemPreset 
 }
 
 /**
+ * DL9SAU: Resolve the effective configured TX power so Stage 2's
+ * "configured - 6 dB, floor 10 dBm" derivation operates on the actual
+ * operating power even when the user left config.lora.tx_power at 0
+ * ("use region default"). Mirrors a simplified subset of
+ * RadioInterface::applyModemConfig:
+ *   - tx_power == 0       → use region powerLimit
+ *   - tx_power >  region  → cap at region powerLimit
+ *   - otherwise           → use tx_power as-is
+ *   - final fallback 17 dBm if still 0
+ * Defined out-of-line in MeshRadio.cpp so this header doesn't have
+ * to pull in NodeDB.h just to see `config`.
+ */
+int8_t effectiveConfiguredTxPower();
+
+/**
+ * DL9SAU Stage 2: configured TX power minus 6 dB, floored at 10 dBm.
+ * Used by own telemetry and CLIENT/CLIENT_BASE relays.
+ */
+int8_t reducedTxPowerForStage2();
+
+/**
  * DL9SAU: Reverse lookup — given (bw, sf), return the modem preset that
  * produces those parameters, or MODEM_PRESET_END if no preset matches.
  * Used by AdminModule to keep the primary channel name in sync even when
