@@ -4,6 +4,102 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-25  Stage 2 v2 — role-aware own-TX + relay direct-source rule
+---------------------------------------------------------------------
+Three related refinements to Stage 2 driven by a second pass on the
+"who should be defensive when" question.
+
+A) Own TX is now differentiated by role. Stage 2 own-TX modulation
+   only applies to CLIENT and CLIENT_BASE — every other role goes
+   vanilla, because those roles exist for a specific publishing
+   purpose (SENSOR exists to publish sensor data, TRACKER exists to
+   publish positions, ...) and throttling them would defeat their
+   stated intent.
+
+   * CLIENT (generic mobile user node) — defensive:
+       Position  : hop=min(conf,2), CR=5,        pwr=default
+       Telemetry : hop=0,           CR=5,        pwr=conf-6 (≥10)
+
+   * CLIENT_BASE (stationary infrastructure node) — full visibility:
+       Position  : hop=default,     CR=default,  pwr=default
+       Telemetry : hop=0,           CR=default,  pwr=default
+       (telemetry hop=0 stays because it is heartbeat data — even
+        a base station gains nothing by propagating it further.
+        If a future use-case needs gateway/MQTT reach we can
+        revisit and bump it to 1 or 2.)
+
+   * SENSOR / TRACKER / TAK_TRACKER / LOST_AND_FOUND /
+     CLIENT_MUTE / CLIENT_HIDDEN / REPEATER / ROUTER /
+     ROUTER_LATE: untouched, fully vanilla. CLIENT_HIDDEN is
+     already heavily restricted by Stock (auto rebroadcast_mode =
+     LOCAL_ONLY, NodeInfo and telemetry suppressed) — nothing
+     for us to add.
+
+B) Relay path gains a "direct-source" exception in
+   FloodingRouter::applyClientRepeatPolicy.
+
+   If getHopsAway(*tosend) == 0 (i.e. the packet still carries its
+   original hop_limit, meaning we are the first relay in the chain
+   and the originator was a direct neighbour), the packet is now
+   forwarded with the configured CR and full configured power, no
+   override. Rationale: when nobody else has retransmitted it yet,
+   our relay is the only one putting it on the air for the next
+   hop — it needs full punch to actually reach that next hop.
+
+   Once a packet has been seen via at least one intermediate relay
+   (hopsFromOriginator > 0), it has been amplified by the mesh
+   already, and our additional relay can safely run reduced.
+
+   getHopsAway == -1 (unknown, e.g. old firmware origin or
+   encrypted packet without a reliable hop_start) falls through to
+   the B2 default reduction — safe-by-default.
+
+C) CLIENT_BASE relay caps further propagation.
+
+   In the B2 reduced-relay branch (= we are relaying an already-
+   seen packet at lower power / CR=5), CLIENT_BASE additionally
+   sets tosend->hop_limit = 0. Effect: our direct neighbours
+   still hear our relay, but they won't forward it.
+
+   Rationale: a base station typically sits among other infra —
+   once it has done its courtesy relay, propagating further is
+   redundant and burns shared airtime. CLIENT (mobile) keeps the
+   standard hop budget because it may sit at a bridge position.
+
+Footprint:
+   src/modules/PositionModule.cpp                  (role gate)
+   src/modules/Telemetry/{Device,Environment,Health,
+                          AirQuality,Power}Telemetry.cpp (role gate)
+   src/mesh/FloodingRouter.cpp                     (B3 ext + B2 hop)
+
+Updated observable-behaviour table:
+
+  +---------------------------+------------------------+------------------------+----------+
+  | Action                    | CLIENT                 | CLIENT_BASE            | other    |
+  +---------------------------+------------------------+------------------------+----------+
+  | Send own Position         | hop≤2, CR=5,           | hop=default,           | vanilla  |
+  |                           |   pwr=default          |   CR/pwr=default       |          |
+  | Send own Telemetry        | hop=0, CR=5,           | hop=0,                 | vanilla  |
+  |                           |   pwr=conf-6 (≥10)     |   CR/pwr=default       |          |
+  +---------------------------+------------------------+------------------------+----------+
+  | Relay drop:               | telemetry, undecodable, non-core portnums           | vanilla  |
+  | Relay full pwr+CR:        | TRACEROUTE, ROUTING, direct-DM to 12 h-known        | vanilla  |
+  |                           |   neighbour (next_hop=us), packet direct from       |          |
+  |                           |   originator (getHopsAway==0)                       |          |
+  | Relay reduced (B2):       | CR=5, pwr=conf-6       | CR=5, pwr=conf-6       | vanilla  |
+  |                           |   (≥10)                |   (≥10), hop_limit=0   |          |
+  +---------------------------+------------------------+------------------------+----------+
+
+  "other" = SENSOR / TRACKER / TAK_TRACKER / LOST_AND_FOUND /
+  CLIENT_MUTE / CLIENT_HIDDEN / REPEATER / ROUTER / ROUTER_LATE.
+
+Why this is coherent:
+  - CLIENT rule       = "always CR=5, sometimes reduce pwr/hop".
+  - CLIENT_BASE rule  = "always default CR/pwr, sometimes reduce hop".
+  - Everyone else     = no change. The user picked that role for a
+                        reason; respect their intent.
+
+
 2026-05-24  Fix Stage 3 user-override on nRF52 + tx-power resolver
 ------------------------------------------------------------------
 Field test showed the Stage 3 user-override magic word was NOT

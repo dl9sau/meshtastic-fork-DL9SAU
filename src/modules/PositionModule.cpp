@@ -372,20 +372,22 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
     if (channel > 0)
         p->channel = channel;
 
-    // DL9SAU: cap our own outgoing position at 2 hops regardless of the
-    // configured global hop limit. Position is high-volume on a busy mesh
-    // and 2 hops is plenty for "where am I" updates.
-    {
+    // DL9SAU: position-specific defensive modulation, role-gated.
+    //  - CLIENT: defensive — hop_limit capped at 2, CR=5, power unchanged
+    //    (position must remain reachable).
+    //  - All other roles: vanilla. CLIENT_BASE = infrastructure (full
+    //    visibility wanted). TRACKER / TAK_TRACKER exist specifically to
+    //    publish position and shouldn't be throttled. REPEATER / ROUTER /
+    //    SENSOR / CLIENT_MUTE / CLIENT_HIDDEN don't normally need
+    //    position-throttling, and if they do emit one we don't want to
+    //    second-guess the user's intent.
+    if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT) {
         constexpr uint8_t POSITION_HOP_CAP = 2;
         uint8_t current = Default::getConfiguredOrDefaultHopLimit(config.lora.hop_limit);
         p->hop_limit = current > POSITION_HOP_CAP ? POSITION_HOP_CAP : current;
+        p->has_tx_cr_override = true;
+        p->tx_cr_override = 5;
     }
-
-    // DL9SAU Stage 2: send our own position with CR=5 regardless of the
-    // global LoRa config. TX-power is left at the configured value (no
-    // override) — position must remain reachable.
-    p->has_tx_cr_override = true;
-    p->tx_cr_override = 5;
 
     service->sendToMesh(p, RX_SRC_LOCAL, true);
 

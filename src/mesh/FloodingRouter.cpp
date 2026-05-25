@@ -216,12 +216,29 @@ bool FloodingRouter::applyClientRepeatPolicy(meshtastic_MeshPacket *tosend)
             }
         }
     }
+    // B3 extension: packet still carries its original hop_limit
+    // (hop_start - hop_limit == 0), which means we are the first relay
+    // in the chain — the originator was a direct neighbour. Give it full
+    // power so the next hop on the path actually hears us. getHopsAway
+    // returns -1 when hop_start isn't reliable; in that case we fall
+    // through to the B2 default.
+    if (getHopsAway(*tosend) == 0) {
+        return true;
+    }
 
     // B2 default: CR=5, TX-power = configured - 6 dB (floor 10 dBm).
     tosend->has_tx_cr_override = true;
     tosend->tx_cr_override = 5;
     tosend->has_tx_power_override = true;
     tosend->tx_power_override = reducedTxPowerForStage2();
+    // CLIENT_BASE extra: kill the rebroadcast chain at one hop past us.
+    // Rationale: a base station typically sits among other infrastructure
+    // — once it has done its courtesy relay, propagating further is
+    // redundant and burns shared airtime. Mobile CLIENT keeps the
+    // standard hop budget because it may sit at a bridge position.
+    if (role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE) {
+        tosend->hop_limit = 0;
+    }
     return true;
 }
 

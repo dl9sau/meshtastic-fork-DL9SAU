@@ -273,14 +273,22 @@ bool PowerTelemetryModule::sendTelemetry(NodeNum dest, bool phoneOnly)
             p->priority = meshtastic_MeshPacket_Priority_RELIABLE;
         else
             p->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
-        // DL9SAU: own telemetry is direct-neighbor only (no rebroadcast)
-        p->hop_limit = 0;
-        // DL9SAU Stage 2: CR=5 and power -6 dB (min 10 dBm) regardless of
-        // global LoRa config.
-        p->has_tx_cr_override = true;
-        p->tx_cr_override = 5;
-        p->has_tx_power_override = true;
-        p->tx_power_override = reducedTxPowerForStage2();
+        // DL9SAU Stage 2: role-gated.
+        //   CLIENT       : hop=0, CR=5, pwr=conf-6 (>=10)
+        //   CLIENT_BASE  : hop=0, CR=default, pwr=default
+        //   others       : vanilla.
+        {
+            const auto _dl9sauRole = config.device.role;
+            if (_dl9sauRole == meshtastic_Config_DeviceConfig_Role_CLIENT) {
+                p->hop_limit = 0;
+                p->has_tx_cr_override = true;
+                p->tx_cr_override = 5;
+                p->has_tx_power_override = true;
+                p->tx_power_override = reducedTxPowerForStage2();
+            } else if (_dl9sauRole == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE) {
+                p->hop_limit = 0;
+            }
+        }
         // release previous packet before occupying a new spot
         if (lastMeasurementPacket != nullptr)
             packetPool.release(lastMeasurementPacket);
