@@ -73,12 +73,15 @@ class PositionModule : public ProtobufModule<meshtastic_Position>, private concu
     /** DL9SAU Stage 4: send a LongFast companion position beacon if the
      *  current preset is not LongFast and at least one hour has passed
      *  since the last companion. Called at the end of sendOurPosition().
+     *  positionHopLimit carries the hop_limit the regular position was
+     *  sent with (already role-capped for CLIENT, default for others),
+     *  so the companion inherits the same reach the user asked for.
      *  Channel handling: defaults to the same channel as the normal
      *  position, EXCEPT when that channel's name matches a known modem
      *  preset name AND its PSK is the default (AQ==) — in which case
      *  the companion is sent on the virtual public default LongFast
      *  channel so any random finder can decode it. */
-    void maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel);
+    void maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel, uint8_t positionHopLimit);
 
 #if USERPREFS_EVENT_MODE
     // In event mode we want to prevent excessive position broadcasts

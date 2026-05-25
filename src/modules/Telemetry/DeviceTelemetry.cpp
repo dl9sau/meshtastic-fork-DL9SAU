@@ -195,8 +195,8 @@ bool DeviceTelemetryModule::sendTelemetry(NodeNum dest, bool phoneOnly)
     // generic client roles get any change; SENSOR / TRACKER / etc. exist
     // specifically to publish their data and stay vanilla. REPEATER /
     // ROUTER also vanilla.
-    //   CLIENT       : hop=0, CR=5, pwr=conf-6 (>=10)
-    //   CLIENT_BASE  : hop=0, CR=default, pwr=default
+    //   CLIENT                  : hop=0, CR=5, pwr=conf-6 (>=10)
+    //   CLIENT_MUTE, CLIENT_BASE: hop=0, CR=default, pwr=default
     {
         const auto _dl9sauRole = config.device.role;
         if (_dl9sauRole == meshtastic_Config_DeviceConfig_Role_CLIENT) {
@@ -205,7 +205,8 @@ bool DeviceTelemetryModule::sendTelemetry(NodeNum dest, bool phoneOnly)
             p->tx_cr_override = 5;
             p->has_tx_power_override = true;
             p->tx_power_override = reducedTxPowerForStage2();
-        } else if (_dl9sauRole == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE) {
+        } else if (_dl9sauRole == meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE ||
+                   _dl9sauRole == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE) {
             p->hop_limit = 0;
         }
     }

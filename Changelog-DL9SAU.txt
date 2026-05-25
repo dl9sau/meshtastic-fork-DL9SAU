@@ -4,6 +4,64 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-25  Stage 4 follow-up — hop inheritance, loopback fix, CLIENT_MUTE Stage 1
+---------------------------------------------------------------------------------
+Field test of Stage 4 surfaced two cosmetic bugs and one design
+gap; addressed all three in one pass.
+
+(A) "ERROR: Invalid channel index 8 > 8" + "WARN: No suitable
+    channel found for decoding, hash was 0x8!".
+    Source: the local loopback in Router::sendLocal calls
+    handleReceived(p, src) for broadcasts so local apps see them.
+    The Stage-4 companion has p->channel set to the virtual public
+    LongFast hash (0x8), which is not a valid index into
+    channelFile.channels[]. MeshModule::callModules then does
+    channels.getByIndex(mp.channel) → the error log fires. The
+    follow-up perhapsDecode also fails because hash 0x8 isn't in
+    any real channel.
+
+    Fix: in Router::sendLocal, skip the loopback when
+    p->companion_crypto_ready is set. The wire send is unaffected
+    (it goes through Router::send / perhapsEncode which already
+    honours companion_crypto_ready). The original position has
+    already been delivered to local apps through its own loopback,
+    so the companion's loopback was redundant anyway.
+
+(C) Companion was emitting with HopLim=5 (default from
+    Router::allocForSending) instead of inheriting the same
+    hop-limit cap the regular position used. Functional impact
+    depends on user config: e.g. a CLIENT with default hop=5
+    would emit a regular position at HopLim=2 (Stage 1) but the
+    companion at HopLim=5 — three extra hops of network noise.
+
+    Fix: capture p->hop_limit just before the regular position is
+    handed off to service->sendToMesh, pass it as a parameter to
+    maybeSendLongFastCompanion, stamp it onto the companion. The
+    companion now inherits exactly the reach the user asked for
+    on the regular position.
+
+(Bug B is the perhapsDecode warning — same root cause as A and
+also resolved by the loopback skip.)
+
+(D) CLIENT_MUTE gains Stage 1 (the defensive hop cap).
+    Previously CLIENT_MUTE went vanilla (default hop) across all
+    own-traffic stages on the "stays bit-for-bit like Stock
+    Meshtastic" argument. But "mute" semantically means "I do not
+    propagate other people's traffic" — and as a corollary, a
+    user who deliberately picks CLIENT_MUTE also signals "I want
+    a small footprint in the mesh". Stage 1 (hop_limit=0 on own
+    telemetry, hop_limit≤2 on own position) matches that intent.
+
+    Stage 2 own-TX (CR=5, pwr-6 dB) stays vanilla for CLIENT_MUTE
+    — power reduction is incompatible with "still but audible in
+    1-2 hops", and the user has already chosen a quiet role so
+    further dampening their reach isn't useful.
+
+    Stages 3 and 4 remain active for CLIENT_MUTE (already so —
+    CLIENT_MUTE roams like any user-tier role, and a lost mute
+    device wants to be found).
+
+
 2026-05-25  Stage 4 — once-per-hour LongFast companion position beacon
 ----------------------------------------------------------------------
 Lost-device-recovery feature. When the device runs a non-LongFast

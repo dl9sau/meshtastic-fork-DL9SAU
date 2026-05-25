@@ -255,7 +255,18 @@ ErrorCode Router::sendLocal(meshtastic_MeshPacket *p, RxSource src)
     } else {
         // If we are sending a broadcast, we also treat it as if we just received it ourself
         // this allows local apps (and PCs) to see broadcasts sourced locally
-        if (isBroadcast(p->to)) {
+        //
+        // DL9SAU Stage 4: skip the local loopback when this is a virtual-
+        // companion-channel packet. p->channel carries the precomputed
+        // public-LongFast channel hash (e.g. 0x08), which is NOT a valid
+        // index into channelFile.channels[] — the loopback module pipeline
+        // (MeshModule::callModules → channels.getByIndex(mp.channel))
+        // would emit a spurious "Invalid channel index" error, and
+        // perhapsDecode would log "No suitable channel found". The wire
+        // send itself is independent of the loopback; the original
+        // position has already gone through the regular loopback for
+        // local apps.
+        if (isBroadcast(p->to) && !p->companion_crypto_ready) {
             handleReceived(p, src);
         }
 

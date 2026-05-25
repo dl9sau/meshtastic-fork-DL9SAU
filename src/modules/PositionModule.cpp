@@ -378,25 +378,37 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
     // DL9SAU: position-specific defensive modulation, role-gated.
     //  - CLIENT: defensive — hop_limit capped at 2, CR=5, power unchanged
     //    (position must remain reachable).
+    //  - CLIENT_MUTE: hop_limit capped at 2 (Stage 1) but CR and power
+    //    stay vanilla. "mute" means the user wants minimal footprint AND
+    //    wants their own packets to be heard clearly in their 1-2-hop
+    //    neighbourhood.
     //  - All other roles: vanilla. CLIENT_BASE = infrastructure (full
     //    visibility wanted). TRACKER / TAK_TRACKER exist specifically to
     //    publish position and shouldn't be throttled. REPEATER / ROUTER /
-    //    SENSOR / CLIENT_MUTE / CLIENT_HIDDEN don't normally need
-    //    position-throttling, and if they do emit one we don't want to
-    //    second-guess the user's intent.
-    if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT) {
-        constexpr uint8_t POSITION_HOP_CAP = 2;
-        uint8_t current = Default::getConfiguredOrDefaultHopLimit(config.lora.hop_limit);
-        p->hop_limit = current > POSITION_HOP_CAP ? POSITION_HOP_CAP : current;
-        p->has_tx_cr_override = true;
-        p->tx_cr_override = 5;
+    //    SENSOR / CLIENT_HIDDEN don't normally need position-throttling.
+    {
+        const auto _role = config.device.role;
+        const bool isClient = _role == meshtastic_Config_DeviceConfig_Role_CLIENT;
+        const bool isClientMute = _role == meshtastic_Config_DeviceConfig_Role_CLIENT_MUTE;
+        if (isClient || isClientMute) {
+            constexpr uint8_t POSITION_HOP_CAP = 2;
+            uint8_t current = Default::getConfiguredOrDefaultHopLimit(config.lora.hop_limit);
+            p->hop_limit = current > POSITION_HOP_CAP ? POSITION_HOP_CAP : current;
+            if (isClient) {
+                p->has_tx_cr_override = true;
+                p->tx_cr_override = 5;
+            }
+        }
     }
 
+    const uint8_t positionHopLimitForCompanion = p->hop_limit; // capture before send releases p
     service->sendToMesh(p, RX_SRC_LOCAL, true);
 
     // DL9SAU Stage 4: opportunistic LongFast companion beacon for
-    // lost-device recovery (≤ 1 per hour).
-    maybeSendLongFastCompanion(dest, channel);
+    // lost-device recovery (≤ 1 per hour). Pass the same hop_limit the
+    // regular position used so the companion follows the user's
+    // configured reach.
+    maybeSendLongFastCompanion(dest, channel, positionHopLimitForCompanion);
 
     if (IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TRACKER,
                   meshtastic_Config_DeviceConfig_Role_TAK_TRACKER) &&
@@ -414,29 +426,41 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
     }
 }
 
-void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel)
+void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel, uint8_t positionHopLimit)
 {
+    LOG_DEBUG("Stage 4: maybeSendLongFastCompanion enter (role=%d preset=%d posCh=%u hop=%u last=%u)", (int)config.device.role,
+              (int)config.lora.modem_preset, (unsigned)positionChannel, (unsigned)positionHopLimit, (unsigned)lastLongFastBeaconMs);
+
     // Skip for infrastructure roles — they have a deliberately chosen
     // fixed setup; we don't second-guess them.
     const auto role = config.device.role;
     if (role == meshtastic_Config_DeviceConfig_Role_REPEATER || role == meshtastic_Config_DeviceConfig_Role_ROUTER ||
-        role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE)
+        role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE) {
+        LOG_DEBUG("Stage 4: skip — infrastructure role");
         return;
+    }
 
     // Only meaningful when our home preset is something other than
     // LongFast (SF != 11 || BW != 250 kHz). CR is irrelevant.
-    if (!myRegion)
+    if (!myRegion) {
+        LOG_DEBUG("Stage 4: skip — no region");
         return;
+    }
     float homeBw = 0;
     uint8_t homeSf = 0, homeCr = 0;
     modemPresetToParams(config.lora.modem_preset, myRegion->wideLora, homeBw, homeSf, homeCr);
-    if (homeSf == 11 && homeBw > 249.0f && homeBw < 251.0f)
-        return; // home is already LongFast — nothing to add
+    LOG_DEBUG("Stage 4: home preset resolved sf=%u bw=%.1f cr=%u", (unsigned)homeSf, (double)homeBw, (unsigned)homeCr);
+    if (homeSf == 11 && homeBw > 249.0f && homeBw < 251.0f) {
+        LOG_DEBUG("Stage 4: skip — home is LongFast");
+        return;
+    }
 
     const uint32_t now = millis();
     constexpr uint32_t ONE_HOUR_MS = 60UL * 60UL * 1000UL;
-    if (lastLongFastBeaconMs != 0 && (now - lastLongFastBeaconMs) < ONE_HOUR_MS)
+    if (lastLongFastBeaconMs != 0 && (now - lastLongFastBeaconMs) < ONE_HOUR_MS) {
+        LOG_DEBUG("Stage 4: skip — 1h hurdle (%u ms since last)", (unsigned)(now - lastLongFastBeaconMs));
         return;
+    }
 
     // Decide channel handling. If the position-channel is named like a
     // known modem-preset display name AND uses the default PSK, we are
@@ -468,6 +492,10 @@ void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionCh
     companion->to = dest;
     companion->decoded.want_response = false;
     companion->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+    // Inherit the role-capped hop_limit the regular position used —
+    // CLIENT → typically 2, CLIENT_BASE / TRACKER / SENSOR / ... →
+    // whatever the user configured (vanilla).
+    companion->hop_limit = positionHopLimit;
     // Preset override → SF/BW/CR switched to LongFast by startSend()
     companion->has_tx_preset_override = true;
     companion->tx_preset_override = (uint8_t)meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
