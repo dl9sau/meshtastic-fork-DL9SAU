@@ -518,7 +518,13 @@ void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionCh
 
     lastLongFastBeaconMs = now;
     LOG_INFO("DL9SAU Stage 4: emit LongFast companion (channel %s)", channelIsPublicDefault ? "VIRTUAL-LongFast" : "same-as-pos");
-    service->sendToMesh(companion, RX_SRC_LOCAL, true);
+    // ccToPhone=false: companion is a wire-only beacon for external
+    // finders. The regular position was already cc'd to the phone with
+    // its real channel; cc'ing the virtual-channel companion would just
+    // make sendToPhone call perhapsDecode with the synthetic hash and
+    // emit spurious "Invalid channel index" / "No suitable channel"
+    // logs.
+    service->sendToMesh(companion, RX_SRC_LOCAL, false);
 }
 
 #define RUNONCE_INTERVAL 5000;
