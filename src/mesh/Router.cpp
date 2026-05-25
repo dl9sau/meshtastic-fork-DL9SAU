@@ -364,7 +364,12 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
     fixPriority(p); // Before encryption, fix the priority if it's unset
     // Position precision is an originator-only privacy policy. Relays keep
     // p->from as the original sender, so do not rewrite their POSITION_APP payload.
-    if (isFromUs(p)) {
+    // DL9SAU Stage 4: additionally skip for the virtual LongFast companion.
+    // p->channel there is the precomputed LongFast+default-PSK hash, not a valid
+    // index — looking it up would emit a spurious "Invalid channel index" error.
+    // The companion's payload was already precision-clamped via the regular
+    // position it was cloned from.
+    if (isFromUs(p) && !p->companion_crypto_ready) {
         if (!applyPositionPrecisionForChannel(*p, p->channel)) {
             LOG_ERROR("Dropping malformed position packet before send");
             packetPool.release(p);
@@ -389,7 +394,11 @@ ErrorCode Router::send(meshtastic_MeshPacket *p)
         }
 #if !MESHTASTIC_EXCLUDE_MQTT
         // Only publish to MQTT if we're the original transmitter of the packet
-        if (moduleConfig.mqtt.enabled && isFromUs(p) && mqtt) {
+        // DL9SAU Stage 4: don't publish the virtual-channel companion to MQTT —
+        // chIndex here is the synthetic LongFast-default hash, not a real
+        // channel index; MQTT::onSend would do channel-table lookups that
+        // crash on dummyChannel.
+        if (moduleConfig.mqtt.enabled && isFromUs(p) && mqtt && !p->companion_crypto_ready) {
             mqtt->onSend(*p, *p_decoded, chIndex);
         }
 #endif
