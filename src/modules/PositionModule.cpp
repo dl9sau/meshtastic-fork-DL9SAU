@@ -428,37 +428,29 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
 
 void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel, uint8_t positionHopLimit)
 {
-    LOG_DEBUG("Stage 4: maybeSendLongFastCompanion enter (role=%d preset=%d posCh=%u hop=%u last=%u)", (int)config.device.role,
-              (int)config.lora.modem_preset, (unsigned)positionChannel, (unsigned)positionHopLimit, (unsigned)lastLongFastBeaconMs);
-
     // Skip for infrastructure roles — they have a deliberately chosen
     // fixed setup; we don't second-guess them.
     const auto role = config.device.role;
     if (role == meshtastic_Config_DeviceConfig_Role_REPEATER || role == meshtastic_Config_DeviceConfig_Role_ROUTER ||
         role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE) {
-        LOG_DEBUG("Stage 4: skip — infrastructure role");
         return;
     }
 
     // Only meaningful when our home preset is something other than
     // LongFast (SF != 11 || BW != 250 kHz). CR is irrelevant.
     if (!myRegion) {
-        LOG_DEBUG("Stage 4: skip — no region");
         return;
     }
     float homeBw = 0;
     uint8_t homeSf = 0, homeCr = 0;
     modemPresetToParams(config.lora.modem_preset, myRegion->wideLora, homeBw, homeSf, homeCr);
-    LOG_DEBUG("Stage 4: home preset resolved sf=%u bw=%.1f cr=%u", (unsigned)homeSf, (double)homeBw, (unsigned)homeCr);
     if (homeSf == 11 && homeBw > 249.0f && homeBw < 251.0f) {
-        LOG_DEBUG("Stage 4: skip — home is LongFast");
         return;
     }
 
     const uint32_t now = millis();
     constexpr uint32_t ONE_HOUR_MS = 60UL * 60UL * 1000UL;
     if (lastLongFastBeaconMs != 0 && (now - lastLongFastBeaconMs) < ONE_HOUR_MS) {
-        LOG_DEBUG("Stage 4: skip — 1h hurdle (%u ms since last)", (unsigned)(now - lastLongFastBeaconMs));
         return;
     }
 

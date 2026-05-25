@@ -4,6 +4,38 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-25  Stage 4 follow-up — send-path channel-index skips + log cleanup
+---------------------------------------------------------------------------
+Field-test follow-ups after the previous loopback fix surfaced
+two more code paths that interpret p->channel as a real index
+into channelFile.channels[] and choke on the virtual companion
+hash (0x8):
+
+  * Router::send → applyPositionPrecisionForChannel(*p, p->channel)
+    runs before the wire send. Internally calls
+    channels.getByIndex(p->channel) which emits the same
+    "ERROR: Invalid channel index 8 > 8" + returns dummyChannel.
+    Companion payload was already precision-clamped via the
+    regular position it was cloned from, so the pass is skipped
+    when p->companion_crypto_ready is set.
+  * Router::send → mqtt->onSend(*p, *p_decoded, chIndex) when
+    MQTT is enabled. Same synthetic-hash crash potential. Skip
+    MQTT publish for the companion — it is a wire-only beacon
+    for external finders, not a bridge target.
+
+Field-validated on tracker-t1000-e: LongFast (skip path),
+MediumSlow (companion send), MediumFast (companion send). No
+"Invalid channel index" / "No suitable channel" errors remain,
+both packets enqueue + transmit cleanly with companion HopLim
+inherited from the regular position.
+
+Verbose LOG_DEBUG per-gate skip-reason traces in
+maybeSendLongFastCompanion removed after validation; the single
+LOG_INFO "emit LongFast companion" remains as the user-visible
+summary, plus the LOG_DEBUG "companion crypto set ... hash 0x%x"
+at the crypto layer.
+
+
 2026-05-25  Stage 4 follow-up — hop inheritance, loopback fix, CLIENT_MUTE Stage 1
 ---------------------------------------------------------------------------------
 Field test of Stage 4 surfaced two cosmetic bugs and one design
