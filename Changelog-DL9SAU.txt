@@ -168,6 +168,50 @@ Footprint:
   src/Power.cpp                       (clearUserOverride
                                        from shutdown())
 
+Per-platform user-override-magic-clear behaviour:
+
+  Storage:
+    nRF52      : NRF_POWER->GPREGRET2, accessed via
+                 sd_power_gpregret_set/_clr/_get (SoftDevice SVC).
+    ESP32-S3   : RTC_NOINIT_ATTR static in RTC slow memory.
+
+  +-----------------------------+---------------------------+--------------------------+
+  | Action                      | nRF52 (T1000-E)           | ESP32-S3 (Heltec WT)     |
+  +-----------------------------+---------------------------+--------------------------+
+  | Manual mode change in app   | magic set (0xa5)          | magic set (0xa5)         |
+  | Mode-change reboot          | preserved                 | preserved                |
+  |  (NVIC_SystemReset / ESP.   |                           |                          |
+  |  restart)                   |                           |                          |
+  | Power::shutdown()           | cleared                   | cleared                  |
+  |  ─ T1000-E: power button    |                           |                          |
+  |  ─ Heltec WT: ~4 s "long-   |                           |                          |
+  |    long-press" on user      |                           |                          |
+  |    button (GPIO 0 →         |                           |                          |
+  |    INPUT_BROKER_SHUTDOWN →  |                           |                          |
+  |    Power::shutdown(); see   |                           |                          |
+  |    src/input/InputBroker.cpp|                           |                          |
+  |    longLongPress binding)   |                           |                          |
+  | True power-cycle / battery  | HW-cleared                | HW-cleared on POWERON_   |
+  |  pull                       |                           |  RESET / brown-out       |
+  | EN/Reset pin button         | T1000-E has none exposed  | variant-dependent; may   |
+  |                             |                           |  or may not wipe RTC     |
+  |                             |                           |  slow memory. Use the    |
+  |                             |                           |  long-long-press path    |
+  |                             |                           |  for deterministic clear.|
+  | Scheduled deep sleep wake   | preserved                 | preserved                |
+  |  (Tracker power_saving)     |  (doDeepSleep with finite |  (esp_deep_sleep_start   |
+  |                             |   delay, no shutdown())   |   + timer/GPIO wake)     |
+  +-----------------------------+---------------------------+--------------------------+
+
+  Lesson summary across both platforms: hardware-retention storage
+  alone is not the whole contract — the access path matters.
+  nRF52 needs the SoftDevice SVC gateway (direct register writes
+  are masked while the SoftDevice is active); ESP32 needs the
+  explicit clear in Power::shutdown() because the EN-pin reset
+  semantics on the S3 don't guarantee that RTC slow memory is
+  wiped. Both platforms end up with the same observable behaviour
+  for the user.
+
 
 2026-05-25  Stage 2 v2 — role-aware own-TX + relay direct-source rule
 ---------------------------------------------------------------------
