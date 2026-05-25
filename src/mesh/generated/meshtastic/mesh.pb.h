@@ -1077,6 +1077,14 @@ typedef struct _meshtastic_MeshPacket {
     int8_t tx_power_override; /* override TX power in dBm for this TX only */
     bool has_tx_preset_override;
     uint8_t tx_preset_override; /* override modem_preset enum value for this TX (Stage 4) */
+    /* Stage 4 companion channel: signal to Router::perhapsEncode that
+     * the caller has already set up the crypto engine's key (via
+     * Channels::setupCompanionDefaultPresetCrypto) and pre-computed the
+     * channel hash, so the encode step should skip its usual
+     * setActiveByIndex / hash-rewrite and just encrypt with whatever
+     * is currently set. The channel field is interpreted as the
+     * already-final hash, not as a channel index. */
+    bool companion_crypto_ready;
 } meshtastic_MeshPacket;
 
 /* The bluetooth to device link:

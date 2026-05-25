@@ -96,6 +96,19 @@ class Channels
 
     bool setDefaultPresetCryptoForHash(ChannelHash channelHash);
 
+    /**
+     * DL9SAU Stage 4: prepare the crypto state for sending the
+     * "LongFast companion beacon" on the virtual public default
+     * channel of a given preset (without consuming a real channel
+     * slot). Sets the crypto engine's key to defaultpsk and returns
+     * the channel hash that "<presetDisplayName>" + defaultpsk
+     * would produce, suitable for stuffing into the outgoing packet
+     * header's channel field.
+     * @return the channel hash on success, -1 if the preset name is
+     *         unavailable.
+     */
+    int16_t setupCompanionDefaultPresetCrypto(meshtastic_Config_LoRaConfig_ModemPreset preset);
+
     int16_t getHash(ChannelIndex i) { return hashes[i]; }
 
     /**

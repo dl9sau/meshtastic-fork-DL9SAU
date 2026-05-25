@@ -544,10 +544,19 @@ void RadioLibInterface::completeSending()
         packetPool.release(p);
     }
 
-    // DL9SAU Stage 2: restore CR / power to the home configuration so the
-    // next TX and the receiver re-arm in startReceive() use the global
-    // settings. Done unconditionally; the *Active flags guard against
-    // calling setRuntime* when no override was applied.
+    // DL9SAU Stage 2 / 4: restore SF / BW / CR / power to the home
+    // configuration so the next TX and the receiver re-arm in
+    // startReceive() use the global settings. Done unconditionally;
+    // the *Active flags guard against calling setRuntime* when no
+    // override was applied.
+    if (txSfOverrideActive) {
+        setRuntimeSpreadFactor(txSfOverrideSaved);
+        txSfOverrideActive = false;
+    }
+    if (txBwOverrideActive) {
+        setRuntimeBandwidth(txBwOverrideSaved);
+        txBwOverrideActive = false;
+    }
     if (txCrOverrideActive) {
         setRuntimeCodingRate(txCrOverrideSaved);
         txCrOverrideActive = false;
@@ -706,27 +715,67 @@ bool RadioLibInterface::startSend(meshtastic_MeshPacket *txp)
     } else {
         configHardwareForSend(); // must be after setStandby
 
-        // DL9SAU Stage 2: apply per-packet radio overrides for this TX only.
-        // Save current values so completeSending() / the error path can
-        // restore them. Backends that do not implement the override hook
-        // return -1 from setRuntime*; we then leave the radio alone.
-        if (txp->has_tx_cr_override && txp->tx_cr_override != cr) {
-            txCrOverrideActive = true;
-            txCrOverrideSaved = cr;
-            if (setRuntimeCodingRate(txp->tx_cr_override) != 0) {
-                txCrOverrideActive = false; // backend refused, don't try to restore later
+        // DL9SAU Stage 4: full preset override takes precedence over the
+        // narrower CR/power overrides. We derive bw/sf/cr from the preset
+        // and apply them via the runtime setters; power is left at the
+        // configured value because the stand-alone Stage-4 use case
+        // (LongFast companion beacon for lost-device recovery) must keep
+        // its reach. The save-and-restore is parallel to Stage 2's.
+        if (txp->has_tx_preset_override) {
+            float pBw = 0;
+            uint8_t pSf = 0, pCr = 0;
+            bool wide = myRegion ? myRegion->wideLora : false;
+            modemPresetToParams((meshtastic_Config_LoRaConfig_ModemPreset)txp->tx_preset_override, wide, pBw, pSf, pCr);
+            if (pSf != sf) {
+                txSfOverrideActive = true;
+                txSfOverrideSaved = sf;
+                if (setRuntimeSpreadFactor(pSf) != 0)
+                    txSfOverrideActive = false;
+            } else {
+                txSfOverrideActive = false;
             }
+            if (pBw != bw) {
+                txBwOverrideActive = true;
+                txBwOverrideSaved = bw;
+                if (setRuntimeBandwidth(pBw) != 0)
+                    txBwOverrideActive = false;
+            } else {
+                txBwOverrideActive = false;
+            }
+            if (pCr != cr) {
+                txCrOverrideActive = true;
+                txCrOverrideSaved = cr;
+                if (setRuntimeCodingRate(pCr) != 0)
+                    txCrOverrideActive = false;
+            } else {
+                txCrOverrideActive = false;
+            }
+            txPowerOverrideActive = false; // power not touched by preset override
         } else {
-            txCrOverrideActive = false;
-        }
-        if (txp->has_tx_power_override && txp->tx_power_override != power) {
-            txPowerOverrideActive = true;
-            txPowerOverrideSaved = power;
-            if (setRuntimeTxPower(txp->tx_power_override) != 0) {
+            // DL9SAU Stage 2: apply per-packet radio overrides for this TX only.
+            // Save current values so completeSending() / the error path can
+            // restore them. Backends that do not implement the override hook
+            // return -1 from setRuntime*; we then leave the radio alone.
+            if (txp->has_tx_cr_override && txp->tx_cr_override != cr) {
+                txCrOverrideActive = true;
+                txCrOverrideSaved = cr;
+                if (setRuntimeCodingRate(txp->tx_cr_override) != 0) {
+                    txCrOverrideActive = false; // backend refused, don't try to restore later
+                }
+            } else {
+                txCrOverrideActive = false;
+            }
+            if (txp->has_tx_power_override && txp->tx_power_override != power) {
+                txPowerOverrideActive = true;
+                txPowerOverrideSaved = power;
+                if (setRuntimeTxPower(txp->tx_power_override) != 0) {
+                    txPowerOverrideActive = false;
+                }
+            } else {
                 txPowerOverrideActive = false;
             }
-        } else {
-            txPowerOverrideActive = false;
+            txSfOverrideActive = false;
+            txBwOverrideActive = false;
         }
 
         size_t numbytes = beginSending(txp);

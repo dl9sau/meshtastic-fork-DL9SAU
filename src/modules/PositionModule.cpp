@@ -1,8 +1,11 @@
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "PositionModule.h"
+#include "Channels.h"
 #include "Default.h"
+#include "DisplayFormatters.h"
 #include "GPS.h"
 #include "GeoPresetSwitcher.h"
+#include "MeshRadio.h"
 #include "MeshService.h"
 #include "NodeDB.h"
 #include "PositionPrecision.h"
@@ -391,6 +394,10 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
 
     service->sendToMesh(p, RX_SRC_LOCAL, true);
 
+    // DL9SAU Stage 4: opportunistic LongFast companion beacon for
+    // lost-device recovery (≤ 1 per hour).
+    maybeSendLongFastCompanion(dest, channel);
+
     if (IS_ONE_OF(config.device.role, meshtastic_Config_DeviceConfig_Role_TRACKER,
                   meshtastic_Config_DeviceConfig_Role_TAK_TRACKER) &&
         config.power.is_power_saving) {
@@ -405,6 +412,85 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
         LOG_DEBUG("Start next execution in 5s, then sleep");
         setIntervalFromNow(FIVE_SECONDS_MS);
     }
+}
+
+void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel)
+{
+    // Skip for infrastructure roles — they have a deliberately chosen
+    // fixed setup; we don't second-guess them.
+    const auto role = config.device.role;
+    if (role == meshtastic_Config_DeviceConfig_Role_REPEATER || role == meshtastic_Config_DeviceConfig_Role_ROUTER ||
+        role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE)
+        return;
+
+    // Only meaningful when our home preset is something other than
+    // LongFast (SF != 11 || BW != 250 kHz). CR is irrelevant.
+    if (!myRegion)
+        return;
+    float homeBw = 0;
+    uint8_t homeSf = 0, homeCr = 0;
+    modemPresetToParams(config.lora.modem_preset, myRegion->wideLora, homeBw, homeSf, homeCr);
+    if (homeSf == 11 && homeBw > 249.0f && homeBw < 251.0f)
+        return; // home is already LongFast — nothing to add
+
+    const uint32_t now = millis();
+    constexpr uint32_t ONE_HOUR_MS = 60UL * 60UL * 1000UL;
+    if (lastLongFastBeaconMs != 0 && (now - lastLongFastBeaconMs) < ONE_HOUR_MS)
+        return;
+
+    // Decide channel handling. If the position-channel is named like a
+    // known modem-preset display name AND uses the default PSK, we are
+    // on the "public default" channel — send the companion on the
+    // virtual public LongFast channel (any default-LongFast finder can
+    // decode). Otherwise re-use the position channel; only the local
+    // mesh that shares that channel/PSK will see the companion, which
+    // is acceptable for a private setup.
+    const meshtastic_Channel &posCh = channels.getByIndex(positionChannel);
+    bool channelIsPublicDefault = false;
+    if (posCh.has_settings && posCh.settings.psk.size == 1 && posCh.settings.psk.bytes[0] == 1) {
+        // PSK is default (AQ==). Now check whether the name matches a
+        // known preset display name.
+        for (int p = _meshtastic_Config_LoRaConfig_ModemPreset_MIN; p <= _meshtastic_Config_LoRaConfig_ModemPreset_MAX; ++p) {
+            const char *presetName =
+                DisplayFormatters::getModemPresetDisplayName((meshtastic_Config_LoRaConfig_ModemPreset)p, false, true);
+            if (presetName && strcmp(presetName, "Invalid") != 0 && strcmp(posCh.settings.name, presetName) == 0) {
+                channelIsPublicDefault = true;
+                break;
+            }
+        }
+    }
+
+    meshtastic_MeshPacket *companion = allocPositionPacket();
+    if (!companion) {
+        LOG_DEBUG("Stage 4: allocPositionPacket returned null for companion");
+        return;
+    }
+    companion->to = dest;
+    companion->decoded.want_response = false;
+    companion->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
+    // Preset override → SF/BW/CR switched to LongFast by startSend()
+    companion->has_tx_preset_override = true;
+    companion->tx_preset_override = (uint8_t)meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+
+    if (channelIsPublicDefault) {
+        // Virtual public default channel: caller-managed crypto + hash.
+        int16_t hash = channels.setupCompanionDefaultPresetCrypto(meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST);
+        if (hash < 0) {
+            // Couldn't set up — fall back to the position channel.
+            companion->channel = positionChannel;
+            companion->companion_crypto_ready = false;
+        } else {
+            companion->channel = (uint8_t)hash;
+            companion->companion_crypto_ready = true;
+        }
+    } else {
+        companion->channel = positionChannel;
+        companion->companion_crypto_ready = false;
+    }
+
+    lastLongFastBeaconMs = now;
+    LOG_INFO("DL9SAU Stage 4: emit LongFast companion (channel %s)", channelIsPublicDefault ? "VIRTUAL-LongFast" : "same-as-pos");
+    service->sendToMesh(companion, RX_SRC_LOCAL, true);
 }
 
 #define RUNONCE_INTERVAL 5000;

@@ -4,6 +4,73 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-25  Stage 4 — once-per-hour LongFast companion position beacon
+----------------------------------------------------------------------
+Lost-device-recovery feature. When the device runs a non-LongFast
+preset (e.g. MediumFast in Berlin), each regular position broadcast
+is opportunistically followed by an additional position packet
+transmitted on LongFast — but at most once per hour, so the radio
+is "blind" to the home preset for at most a couple of seconds per
+hour. Rationale: if the device is lost outside its home mesh, any
+random Meshtastic node within range — most of which default to
+LongFast — has a chance to hear it and forward via MQTT etc.
+
+Gates (all must hold):
+  * config.lora.modem_preset is NOT LongFast
+    (SF != 11 || BW != 250 kHz; CR irrelevant)
+  * role is not REPEATER / ROUTER / ROUTER_LATE (infrastructure
+    stays untouched, same rule as Stage 3)
+  * at least 1 hour since the last companion (lastLongFastBeaconMs)
+
+Channel handling for the companion:
+  * If the position-channel's name matches a known modem-preset
+    display name AND its PSK is the default ("AQ==", i.e. the
+    public default channel that happened to be auto-renamed when
+    the mode was switched) → send on the VIRTUAL public default
+    LongFast channel: crypto temporarily set to defaultpsk and
+    channel-hash computed from "LongFast"+defaultpsk. This is
+    decodable by any default-LongFast finder. No real channel
+    slot is consumed.
+  * Otherwise → send on the same channel as the regular position
+    with its normal crypto. Only the local mesh that shares that
+    channel/PSK can decode the companion — acceptable for a
+    private setup.
+
+Mechanical pieces:
+  * meshtastic_MeshPacket gained a transient bool
+    companion_crypto_ready. When set, Router::perhapsEncode skips
+    its usual setActiveByIndex / hash rewrite and just encrypts
+    with whatever key the caller has already set up via
+    Channels::setupCompanionDefaultPresetCrypto.
+  * Stage-4 backend hooks setRuntimeSpreadFactor /
+    setRuntimeBandwidth added on RF95 / SX126x / SX128x / LR11x0
+    (analog to Stage 2's CR/power hooks).
+  * RadioLibInterface::startSend honours has_tx_preset_override:
+    derives bw/sf/cr from the preset, saves the current values,
+    applies via setRuntime*. completeSending restores. Power is
+    explicitly NOT touched by the preset override path because
+    the Stage-4 companion must keep its reach.
+  * Channels::setupCompanionDefaultPresetCrypto(preset) is the
+    "send-side" mirror of the existing setDefaultPresetCryptoFor
+    Hash() — installs the default PSK on the crypto engine and
+    returns the matching channel hash; no slot allocation.
+  * PositionModule::maybeSendLongFastCompanion() is called from
+    sendOurPosition() right after the normal sendToMesh. Tracks
+    cadence in lastLongFastBeaconMs.
+
+Caveats:
+  * The radio is briefly out of its home preset (~1-3 s) during
+    the LongFast TX. Once per hour is a non-issue.
+  * The companion is sent at the device's configured TX power
+    (no -6 dB reduction) — its whole point is reach.
+  * On a device whose primary channel is "MyMesh+customPSK" the
+    companion still goes out, just on that private channel.
+    Only the user's own mesh can decode it — also fine for the
+    "I want my buddies to find me" use case, less so for the
+    "random stranger to find me" case. The hybrid only works
+    when the user runs the public default channel.
+
+
 2026-05-25  Stage 3 robustness pass — four related fixes
 --------------------------------------------------------
 Field-tested Stage 3 v2 (the outside-region-fallback build) and

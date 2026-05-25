@@ -35,6 +35,9 @@ template <class T> class SX126xInterface : public RadioLibInterface
     /// DL9SAU Stage 2: thin wrappers for per-packet CR / power override.
     int16_t setRuntimeCodingRate(uint8_t cr) override { return lora.setCodingRate(cr); }
     int16_t setRuntimeTxPower(int8_t dBm) override { return lora.setOutputPower(dBm); }
+    /// DL9SAU Stage 4: SF / BW override for the LongFast companion beacon.
+    int16_t setRuntimeSpreadFactor(uint8_t sf) override { return lora.setSpreadingFactor(sf); }
+    int16_t setRuntimeBandwidth(float bwKHz) override { return lora.setBandwidth(bwKHz); }
 
   protected:
     float currentLimit = 140; // Higher OCP limit for SX126x PA

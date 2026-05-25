@@ -634,6 +634,20 @@ meshtastic_Routing_Error perhapsEncode(meshtastic_MeshPacket *p)
 
         ChannelIndex chIndex = p->channel; // keep as a local because we are about to change it
 
+        // DL9SAU Stage 4: virtual companion channel. The caller (Position
+        // Module for the LongFast lost-device beacon) has already set
+        // up the crypto engine with the default-preset PSK and stuffed
+        // the precomputed channel hash into p->channel. Skip the normal
+        // setActiveByIndex / hash rewrite and just encrypt with the
+        // current key. PKI is incompatible with this path (broadcast).
+        if (p->companion_crypto_ready) {
+            crypto->encryptPacket(getFrom(p), p->id, numbytes, bytes);
+            memcpy(p->encrypted.bytes, bytes, numbytes);
+            p->encrypted.size = numbytes;
+            p->which_payload_variant = meshtastic_MeshPacket_encrypted_tag;
+            return meshtastic_Routing_Error_NONE;
+        }
+
 #if !(MESHTASTIC_EXCLUDE_PKI)
         meshtastic_NodeInfoLite *node = nodeDB->getMeshNode(p->to);
         // We may want to retool things so we can send a PKC packet when the client specifies a key and nodenum, even if the node

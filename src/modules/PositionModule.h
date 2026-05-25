@@ -65,6 +65,21 @@ class PositionModule : public ProtobufModule<meshtastic_Position>, private concu
     bool hasGPS();
     uint32_t lastSentReply = 0; // Last time we sent a position reply (used for reply throttling only)
 
+    /** DL9SAU Stage 4: timestamp (millis) of the last LongFast companion
+     *  beacon. Used to gate the once-per-hour cadence. 0 = never sent
+     *  since boot. */
+    uint32_t lastLongFastBeaconMs = 0;
+
+    /** DL9SAU Stage 4: send a LongFast companion position beacon if the
+     *  current preset is not LongFast and at least one hour has passed
+     *  since the last companion. Called at the end of sendOurPosition().
+     *  Channel handling: defaults to the same channel as the normal
+     *  position, EXCEPT when that channel's name matches a known modem
+     *  preset name AND its PSK is the default (AQ==) — in which case
+     *  the companion is sent on the virtual public default LongFast
+     *  channel so any random finder can decode it. */
+    void maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel);
+
 #if USERPREFS_EVENT_MODE
     // In event mode we want to prevent excessive position broadcasts
     // we set the minimum interval to 5m

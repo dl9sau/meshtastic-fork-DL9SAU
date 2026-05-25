@@ -279,6 +279,15 @@ class RadioLibInterface : public RadioInterface, protected concurrency::Notified
     uint8_t txCrOverrideSaved = 5;
     bool txPowerOverrideActive = false;
     int8_t txPowerOverrideSaved = 17;
+    /// DL9SAU Stage 4: same save-and-restore for the SF/BW override
+    /// used by the LongFast companion beacon. Triggered by
+    /// has_tx_preset_override on the outgoing MeshPacket; restored in
+    /// completeSending() so the radio returns to the home preset for
+    /// RX and subsequent TX.
+    bool txSfOverrideActive = false;
+    uint8_t txSfOverrideSaved = 11;
+    bool txBwOverrideActive = false;
+    float txBwOverrideSaved = 250.0f;
 
     bool receiveDetected(uint16_t irq, unsigned long syncWordHeaderValidFlag, unsigned long preambleDetectedFlag);
 

@@ -31,6 +31,9 @@ class RF95Interface : public RadioLibInterface
         return lora->setOutputPower(dBm);
 #endif
     }
+    /// DL9SAU Stage 4: SF / BW override for the LongFast companion beacon.
+    int16_t setRuntimeSpreadFactor(uint8_t sf) override { return lora->setSpreadingFactor(sf); }
+    int16_t setRuntimeBandwidth(float bwKHz) override { return lora->setBandwidth(bwKHz); }
 
     /// Initialise the Driver transport hardware and software.
     /// Make sure the Driver is properly configured before calling init().

@@ -34,6 +34,9 @@ template <class T> class SX128xInterface : public RadioLibInterface
     /// reconfigure()'s "long interleaving except CR=4/7" rule consistent here.
     int16_t setRuntimeCodingRate(uint8_t cr) override { return lora.setCodingRate(cr, cr != 7); }
     int16_t setRuntimeTxPower(int8_t dBm) override { return lora.setOutputPower(dBm); }
+    /// DL9SAU Stage 4: SF / BW override for the LongFast companion beacon.
+    int16_t setRuntimeSpreadFactor(uint8_t sf) override { return lora.setSpreadingFactor(sf); }
+    int16_t setRuntimeBandwidth(float bwKHz) override { return lora.setBandwidth(bwKHz); }
 
   protected:
     /**

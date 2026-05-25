@@ -454,6 +454,28 @@ bool Channels::decryptForHash(ChannelIndex chIndex, ChannelHash channelHash)
     }
 }
 
+int16_t Channels::setupCompanionDefaultPresetCrypto(meshtastic_Config_LoRaConfig_ModemPreset preset)
+{
+    // DL9SAU Stage 4 helper: set the crypto engine's key to the default
+    // PSK (alias 1, "AQ==" expanded) and return the channel-hash that
+    // a freshly-named "<PresetDisplayName>" channel using that PSK
+    // would have. Used by the LongFast companion beacon to TX on the
+    // virtual public default channel even when the local primary uses
+    // a different preset name. Does NOT touch channelFile — no slot is
+    // consumed. The crypto state will be reset on the next TX/RX that
+    // calls setCrypto() for a real channel.
+    const char *name = DisplayFormatters::getModemPresetDisplayName(preset, false, true);
+    if (!name || strcmp(name, "Invalid") == 0)
+        return -1;
+    CryptoKey k;
+    memcpy(k.bytes, defaultpsk, sizeof(defaultpsk));
+    k.length = sizeof(defaultpsk);
+    crypto->setKey(k);
+    const uint8_t h = xorHash((const uint8_t *)name, strlen(name)) ^ xorHash(defaultpsk, sizeof(defaultpsk));
+    LOG_DEBUG("DL9SAU Stage 4: companion crypto set for '%s' + default PSK, hash 0x%x", name, h);
+    return (int16_t)h;
+}
+
 bool Channels::setDefaultPresetCryptoForHash(ChannelHash channelHash)
 {
     // Iterate all known presets
