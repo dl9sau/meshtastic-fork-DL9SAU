@@ -21,6 +21,7 @@
 #include "buzz/buzz.h"
 #include "configuration.h"
 #include "main.h"
+#include "mesh/GeoPresetSwitcher.h"
 #include "meshUtils.h"
 #include "power/PowerHAL.h"
 #include "power/SGM41562.h"
@@ -794,6 +795,14 @@ void Power::reboot()
 
 void Power::shutdown()
 {
+    // DL9SAU: A user-initiated power-off should re-enable the geo
+    // auto-switch on the next boot. On nRF52 the "off" is actually
+    // System OFF mode, and our override magic in GPREGRET2 would
+    // otherwise survive — clear it explicitly here. (Tracker's
+    // scheduled deep sleeps go through doDeepSleep() with a finite
+    // wake delay, not through shutdown(), so the regular workflow is
+    // unaffected.)
+    GeoPresetSwitcher::clearUserOverride();
 
 #if HAS_SCREEN
     if (screen) {

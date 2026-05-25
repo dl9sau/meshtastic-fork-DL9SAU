@@ -4,6 +4,74 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-25  Stage 3 robustness pass — four related fixes
+--------------------------------------------------------
+Field-tested Stage 3 v2 (the outside-region-fallback build) and
+found two real bugs plus one feature gap.
+
+(1) BUG: "Ausschalten + Wiedereinschalten" on the T1000-E did NOT
+    clear the user-override magic, contrary to the documented
+    "power-cycle = clear" contract.
+
+    Root cause: the T1000-E power-off path goes through
+    Power::shutdown() → doDeepSleep(DELAY_FOREVER, ...) →
+    sd_power_system_off(). The nRF52 datasheet is explicit:
+    "GPREGRET registers retain their values through System OFF
+    mode". Only a real cold reset (Vdd interrupted, e.g. battery
+    pulled or RESET pin pulsed) zeros the register — and the
+    T1000-E has neither an accessible battery nor a reset pin.
+
+    Fix: in Power::shutdown(), call GeoPresetSwitcher::
+    clearUserOverride() before the sd_power_system_off() call.
+    User power-button-off therefore zeroes the magic; the next
+    boot starts with auto-switch armed again. Trackers running
+    power_saving go through doDeepSleep() with a finite wake
+    delay (not DELAY_FOREVER) and never reach Power::shutdown(),
+    so their override is preserved across the periodic deep
+    sleeps — exactly the right behaviour.
+
+(2) BUG: lastEvaluateMs was set before the GPS-fix check.
+
+    If GPS wasn't ready at the first evaluate() after boot,
+    lastEvaluateMs was still bumped → the 20-min throttle
+    engaged → no further evaluate would run until the throttle
+    expired, by which time the override situation had drifted.
+
+    Fix: move "lastEvaluateMs = now" to AFTER the
+    "is the position non-zero" check. While GPS isn't ready we
+    silently skip and retry on every runOnce tick (5 s); the
+    20-min throttle only engages once we actually had something
+    real to evaluate.
+
+(3) FEATURE: 2-min boot grace period before first evaluate.
+
+    Stage 3 used to run its first evaluate immediately on boot
+    (lastEvaluateMs==0 sentinel). With the lastEvaluateMs race
+    fixed in (2), that would mean: GPS fixes at +30 s, eval
+    fires, switch + reboot, before the user has even unlocked
+    the phone. Defer first eval until uptime >= 2 min so the
+    user has setup time and the GPS has cold-start headroom.
+
+(4) POLICY: Stage 3 is now explicitly off for infrastructure
+    roles. REPEATER, ROUTER, and ROUTER_LATE are deployed at
+    fixed sites with deliberately chosen modem presets — auto-
+    switching them out from under the operator is wrong.
+
+    All other roles (CLIENT, CLIENT_BASE, CLIENT_MUTE,
+    CLIENT_HIDDEN, TRACKER, SENSOR, TAK_TRACKER,
+    LOST_AND_FOUND, ...) continue to benefit from the geo
+    auto-switch — they roam, so they need to follow the local
+    mesh's preset.
+
+Footprint:
+  src/mesh/GeoPresetSwitcher.{h,cpp}  (clearUserOverride,
+                                       infra role gate,
+                                       lastEvaluateMs race,
+                                       2-min boot grace)
+  src/Power.cpp                       (clearUserOverride
+                                       from shutdown())
+
+
 2026-05-25  Stage 2 v2 — role-aware own-TX + relay direct-source rule
 ---------------------------------------------------------------------
 Three related refinements to Stage 2 driven by a second pass on the

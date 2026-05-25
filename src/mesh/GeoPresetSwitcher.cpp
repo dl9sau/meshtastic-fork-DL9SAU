@@ -75,8 +75,12 @@ static inline uint8_t readOverrideMagic()
 
 // Cadence: re-check region at most every 20 min; cooldown after a switch
 // is the same 20 min so we don't flap if the user is right on a border.
+// Hold off the very first evaluation until 2 min after boot so the GPS has
+// time to fix and the user has time to (re)configure without auto kicking
+// in immediately.
 static constexpr uint32_t EVALUATE_INTERVAL_MS = 20UL * 60UL * 1000UL;
 static constexpr uint32_t COOLDOWN_AFTER_SWITCH_MS = 20UL * 60UL * 1000UL;
+static constexpr uint32_t FIRST_EVAL_AFTER_BOOT_MS = 2UL * 60UL * 1000UL;
 
 // 5 km inward boundary margin, expressed in 1e-7 degrees. 1° latitude ≈
 // 111 km, so 5 km ≈ 4.5e-2 ° → 450 000 in 1e-7. For longitude we use a
@@ -102,8 +106,14 @@ void GeoPresetSwitcher::markUserOverride()
 {
     writeOverrideMagic(AUTO_OVERRIDE_MAGIC);
     LOG_INFO("GeoPresetSwitcher: user override engaged (magic=0x%02x, "
-             "survives soft-reboot, clears on power-cycle)",
+             "survives soft-reboot, clears on power-button-off)",
              (unsigned)AUTO_OVERRIDE_MAGIC);
+}
+
+void GeoPresetSwitcher::clearUserOverride()
+{
+    writeOverrideMagic(0);
+    LOG_INFO("GeoPresetSwitcher: user override cleared (next boot will arm auto-switch again)");
 }
 
 bool GeoPresetSwitcher::prerequisitesOk() const
@@ -113,6 +123,15 @@ bool GeoPresetSwitcher::prerequisitesOk() const
     if (config.lora.region != meshtastic_Config_LoRaConfig_RegionCode_EU_868)
         return false;
     if (!config.lora.use_preset)
+        return false;
+    // Infrastructure roles are deliberately deployed at fixed locations
+    // with a chosen modem preset; auto-switch must never silently re-tune
+    // them. Mobile / "user" roles (CLIENT / CLIENT_BASE / TRACKER /
+    // SENSOR / ...) get the auto-switch treatment so they stay
+    // compatible with whichever local mesh they roam into.
+    const meshtastic_Config_DeviceConfig_Role role = config.device.role;
+    if (role == meshtastic_Config_DeviceConfig_Role_REPEATER || role == meshtastic_Config_DeviceConfig_Role_ROUTER ||
+        role == meshtastic_Config_DeviceConfig_Role_ROUTER_LATE)
         return false;
     // User override active → stay out of the way.
     if (readOverrideMagic() == AUTO_OVERRIDE_MAGIC)
@@ -135,19 +154,27 @@ void GeoPresetSwitcher::evaluate()
 {
     const uint32_t now = millis();
 
-    // Cadence throttle. lastEvaluateMs=0 lets the first call after boot run
-    // immediately; subsequent calls are throttled. Also log the initial
-    // override-magic state once per boot so users can confirm the magic
-    // survived a soft reboot.
-    if (lastEvaluateMs == 0) {
+    // One-time boot log so the user can see the override-magic state. Done
+    // before any early-return so it always appears once per boot.
+    if (!bootLogDone) {
         const uint8_t mg = readOverrideMagic();
         LOG_INFO("GeoPresetSwitcher: boot — override magic=0x%02x (%s)", (unsigned)mg,
                  mg == AUTO_OVERRIDE_MAGIC ? "user override ACTIVE, auto-switch disabled until power cycle"
                                            : "auto-switch armed");
+        bootLogDone = true;
     }
+
+    // 2-min grace period after boot — GPS needs time to fix, user may
+    // still be (re)configuring the device.
+    if (now < FIRST_EVAL_AFTER_BOOT_MS)
+        return;
+
+    // 20-min cadence between full evaluations. Note: we ONLY advance
+    // lastEvaluateMs once we've actually done a real evaluation
+    // (= GPS fix was present). If GPS isn't ready yet we want to retry
+    // on the next runOnce tick, not wait another 20 min.
     if (lastEvaluateMs != 0 && (now - lastEvaluateMs) < EVALUATE_INTERVAL_MS)
         return;
-    lastEvaluateMs = now;
 
     // Cooldown after a recently fired switch (we'll be rebooting anyway,
     // but be defensive in case the reboot is deferred).
@@ -157,9 +184,14 @@ void GeoPresetSwitcher::evaluate()
     if (!prerequisitesOk())
         return;
 
-    // Need a valid position. (0,0) is a sentinel for "no fix yet".
+    // Need a valid position. (0,0) is a sentinel for "no fix yet" — do
+    // NOT bump lastEvaluateMs in that case, keep trying every runOnce.
     if (localPosition.latitude_i == 0 && localPosition.longitude_i == 0)
         return;
+
+    // From here we've actually got something to evaluate against — engage
+    // the 20-min throttle.
+    lastEvaluateMs = now;
 
     // Pick the target preset: matching region, or LongFast as the fallback
     // when the device sits outside all known regions. The fallback ensures

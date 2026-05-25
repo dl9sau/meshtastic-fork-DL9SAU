@@ -45,6 +45,13 @@ class GeoPresetSwitcher
      *  manually. Survives soft-reset, cleared on power-cycle. */
     static void markUserOverride();
 
+    /** Clear the user-override magic explicitly. Called from
+     *  Power::shutdown() so that a user-driven power-off + power-on
+     *  cycle re-enables auto-switching even on hardware (like T1000-E)
+     *  where "off" is actually System OFF mode and the GPREGRET2
+     *  register would otherwise survive it. */
+    static void clearUserOverride();
+
     /** True if the auto-switch is currently in progress (used by
      *  AdminModule so it does NOT mark a user-override when the
      *  config change actually originates from us). */
@@ -58,6 +65,7 @@ class GeoPresetSwitcher
     uint32_t lastEvaluateMs = 0;
     uint32_t lastSwitchMs = 0;
     bool autoSwitchInProgress = false;
+    bool bootLogDone = false;
 };
 
 extern GeoPresetSwitcher geoPresetSwitcher;
