@@ -70,6 +70,36 @@ Caveats:
     "random stranger to find me" case. The hybrid only works
     when the user runs the public default channel.
 
+Cadence interaction with smart-beaconing and the user's
+position-broadcast interval:
+
+  +----------------------------+--------------------------+---------------------+
+  | Mode                       | sendOurPosition is       | LongFast companion  |
+  |                            | called every...          | actually emitted    |
+  +----------------------------+--------------------------+---------------------+
+  | Smart-beacon ON, moving    | ~30 s (smart cadence)    | 1 / hour            |
+  |                            |                          | (1 h floor caps it) |
+  | Smart-beacon ON, stationary| User position_broadcast_ | matches user value  |
+  |                            |  secs (1 h / 2 h / ...)  | (>= 1 h floor)      |
+  | Smart-beacon OFF           | User position_broadcast_ | matches user value  |
+  |                            |  secs                    | (>= 1 h floor)      |
+  | User = NEVER               | not at all               | never               |
+  +----------------------------+--------------------------+---------------------+
+
+  The 1 h floor inside maybeSendLongFastCompanion is an upper-
+  frequency cap, not a lower one — it never delays a companion
+  beyond what the user configured for the regular position.
+
+  Why the 1 h floor exists at all: during the LongFast TX the
+  radio is reconfigured (BW + SF + CR) for ~1-3 s and can't
+  receive on the home preset during that window. At 1 / hour
+  that's ~1-3 s of "blindness" per hour — negligible. At
+  4 / hour (e.g. if someone sets position_broadcast_secs to
+  15 minutes via Android or CLI — the iOS app caps at 1 h
+  anyway) it would be ~4-12 s per hour, already noticeable.
+  The 1 h floor keeps that blind window bounded regardless of
+  what the user picks for the regular position interval.
+
 
 2026-05-25  Stage 3 robustness pass — four related fixes
 --------------------------------------------------------
