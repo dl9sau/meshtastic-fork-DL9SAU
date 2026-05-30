@@ -51,10 +51,13 @@ Auf den hier festgehaltenen Stand spaeter zurueckkommen.
 
 ---
 
-## 2026-05-30 — Plan: typisierte Text-Buckets fuer `toPhoneQueue`
+## 2026-05-30 — Plan: typisierte Text-Buckets fuer `toPhoneQueue` ✅ DONE
 
-**Status:** Spec + Architektur final, Implementation **pending**.
-**Naechste Session:** mit "Starte Implementation gemaess Wishlist 2026-05-30" wiederaufnehmen.
+**Status:** Implementation abgeschlossen am 2026-05-30.
+- Files: `src/mesh/TextBucketStore.{h,cpp}` (neu); Edits in `MeshService.{h,cpp}`, `PhoneAPI.cpp`, `configuration.h`, `platformio.ini`, `Changelog-DL9SAU.txt`.
+- Build-Kosten T1000e: **+28 KB BSS**, **+2.3 KB Flash**. Sehr nahe am Plan.
+- Tunables (Slot-Halving + Flash-off pro Bucket) als Sub-Defines verfuegbar und in `configuration.h` + `platformio.ini` dokumentiert.
+- Bei zukuenftigen Sessions: siehe `src/mesh/TextBucketStore.h` und Changelog-Eintrag 2026-05-30 als Source-of-Truth.
 
 ### Ziel
 

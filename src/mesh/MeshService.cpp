@@ -80,6 +80,9 @@ void MeshService::init()
     if (gps)
         gpsObserver.observe(&gps->newStatus);
 #endif
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+    dl9sau::TextBucketStore::instance().init();
+#endif
 }
 
 int MeshService::handleFromRadio(const meshtastic_MeshPacket *mp)
@@ -128,6 +131,9 @@ void MeshService::loop()
         if (result == 0) // If any observer returns non-zero, we will try again
             oldFromNum = fromNum;
     }
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+    dl9sau::TextBucketStore::instance().loopTick();
+#endif
 }
 
 /// The radioConfig object just changed, call this to force the hw to change to the new settings
@@ -161,12 +167,26 @@ NodeNum MeshService::getNodenumFromRequestId(uint32_t request_id)
     NodeNum nodenum = 0;
     for (int i = 0; i < toPhoneQueue.numUsed(); i++) {
         meshtastic_MeshPacket *p = toPhoneQueue.dequeuePtr(0);
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+        // Mirror the legacy seq_no side-ring round-trip exactly.
+        uint32_t seq = 0;
+        if (legacyRingCount > 0) {
+            seq = legacySeqRing[legacyRingHead];
+            legacyRingHead = (uint8_t)((legacyRingHead + 1) % MAX_RX_TOPHONE);
+            --legacyRingCount;
+        }
+#endif
         if (p->id == request_id) {
             nodenum = p->to;
             // make sure to continue this to make one full loop
         }
         // put it right back on the queue
         toPhoneQueue.enqueue(p, 0);
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+        legacySeqRing[legacyRingTail] = seq;
+        legacyRingTail = (uint8_t)((legacyRingTail + 1) % MAX_RX_TOPHONE);
+        ++legacyRingCount;
+#endif
     }
     return nodenum;
 }
@@ -316,6 +336,18 @@ void MeshService::sendToPhone(meshtastic_MeshPacket *p)
 #endif
 #endif
 
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+    // DL9SAU: split TEXT_MESSAGE_APP into typed buckets so DMs can't be
+    // evicted by chatty channels. The bucket store copies the packet and
+    // releases p back to packetPool.
+    if (p->which_payload_variant == meshtastic_MeshPacket_decoded_tag &&
+        p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP) {
+        dl9sau::TextBucketStore::instance().enqueue(p);
+        fromNum++;
+        return;
+    }
+#endif
+
     if (toPhoneQueue.numFree() == 0) {
         if (p->decoded.portnum == meshtastic_PortNum_TEXT_MESSAGE_APP ||
             p->decoded.portnum == meshtastic_PortNum_RANGE_TEST_APP) {
@@ -323,6 +355,12 @@ void MeshService::sendToPhone(meshtastic_MeshPacket *p)
             meshtastic_MeshPacket *d = toPhoneQueue.dequeuePtr(0);
             if (d)
                 releaseToPool(d);
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+            if (legacyRingCount > 0) {
+                legacyRingHead = (uint8_t)((legacyRingHead + 1) % MAX_RX_TOPHONE);
+                --legacyRingCount;
+            }
+#endif
         } else {
             LOG_WARN("ToPhone queue is full, drop packet");
             releaseToPool(p);
@@ -335,6 +373,13 @@ void MeshService::sendToPhone(meshtastic_MeshPacket *p)
         LOG_CRIT("Failed to queue a packet into toPhoneQueue!");
         abort();
     }
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+    // Tag this legacy slot with a seq_no from the shared monotonic source so
+    // getForPhone() can merge-sort legacy entries against bucket entries.
+    legacySeqRing[legacyRingTail] = dl9sau::TextBucketStore::instance().allocSeqNo();
+    legacyRingTail = (uint8_t)((legacyRingTail + 1) % MAX_RX_TOPHONE);
+    ++legacyRingCount;
+#endif
     fromNum++;
 }
 
@@ -448,9 +493,56 @@ int MeshService::onGPSChanged(const meshtastic::GPSStatus *newStatus)
     return 0;
 }
 #endif
+meshtastic_MeshPacket *MeshService::getForPhone()
+{
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+    // Merge-sort across two sources by seq_no: pick whichever has the
+    // smaller (older) head.
+    uint32_t bucketMin = dl9sau::TextBucketStore::instance().minSeqAcrossAll();
+    uint32_t legacyMin = (legacyRingCount > 0) ? legacySeqRing[legacyRingHead] : UINT32_MAX;
+
+    if (bucketMin == UINT32_MAX && legacyMin == UINT32_MAX)
+        return nullptr;
+
+    if (bucketMin <= legacyMin) {
+        if (dl9sau::TextBucketStore::instance().popMinSeqInto(&toPhoneBucketStaging))
+            return &toPhoneBucketStaging;
+        // race: bucket was emptied between minSeqAcrossAll and popMinSeqInto.
+        // fall through to legacy.
+    }
+
+    if (legacyRingCount > 0) {
+        meshtastic_MeshPacket *p = toPhoneQueue.dequeuePtr(0);
+        legacyRingHead = (uint8_t)((legacyRingHead + 1) % MAX_RX_TOPHONE);
+        --legacyRingCount;
+        return p;
+    }
+    return nullptr;
+#else
+    return toPhoneQueue.dequeuePtr(0);
+#endif
+}
+
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+bool MeshService::isBucketOwnedPacket(const meshtastic_MeshPacket *p) const
+{
+    return p == &toPhoneBucketStaging;
+}
+
+void MeshService::releaseBucketSlotForPhone(meshtastic_MeshPacket *p)
+{
+    // Staging buffer is overwritten on next getForPhone() — no explicit free.
+    (void)p;
+}
+#endif
+
 bool MeshService::isToPhoneQueueEmpty()
 {
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+    return toPhoneQueue.isEmpty() && dl9sau::TextBucketStore::instance().minSeqAcrossAll() == UINT32_MAX;
+#else
     return toPhoneQueue.isEmpty();
+#endif
 }
 
 uint32_t MeshService::GetTimeSinceMeshPacket(const meshtastic_MeshPacket *mp)

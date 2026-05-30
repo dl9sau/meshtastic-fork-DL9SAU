@@ -4,6 +4,40 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-05-30  Typed text-message buckets in front of toPhoneQueue
+---------------------------------------------------------------
+Splits TEXT_MESSAGE_APP packets out of the shared toPhoneQueue
+into 4 typed queues so DMs cannot be evicted by chatty channels.
+Telemetry/Position/Admin/Routing stay in the legacy queue.
+
+Buckets (compile-time slot counts, sub-defines):
+  * PRIMARY (channel 0)             —  8 slots, RAM only
+  * HASHTAG (same PSK as channel 0) — 24 slots, RAM only
+  * PRIVATE (own PSK, != primary)   — 24 slots, RAM + flash
+  * DM (!isBroadcast(to))           — 24 slots, RAM + flash
+
+Drop policy is per-bucket FIFO. Drain order across all sources
+is chronological via a shared monotonic seq_no — including the
+existing toPhoneQueue, which gets a parallel seq_no side-ring.
+
+Flash persistence (PRIVATE + DM only) is debounced to 5 min
+default so chatty deployments don't grind the flash. Magic
+header "TB01" per .dat for fail-soft schema bumps. Restore on
+boot from MeshService::init() after fsInit().
+
+Configurable in src/configuration.h:
+  Master switch: DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+  Per-bucket slots / flash toggles / debounce. See the comment
+  block in configuration.h for two pre-baked tunables (halve
+  slots on tight RAM; disable flash for privacy-first).
+
+Cost on T1000e (nRF52840): +28 KB BSS, +2.3 KB .text.
+Files: src/mesh/TextBucketStore.{h,cpp} (new); edits in
+MeshService.{h,cpp}, PhoneAPI.cpp releasePhonePacket (ownership
+check against staging buffer), getNodenumFromRequestId (mirrors
+the seq_no ring through its dequeue/enqueue rotation).
+
+
 2026-05-25  Stage 4 follow-up — send-path channel-index skips + log cleanup
 ---------------------------------------------------------------------------
 Field-test follow-ups after the previous loopback fix surfaced

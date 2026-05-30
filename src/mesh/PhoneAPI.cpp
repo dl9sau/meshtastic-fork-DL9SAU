@@ -649,7 +649,16 @@ void PhoneAPI::sendConfigComplete()
 void PhoneAPI::releasePhonePacket()
 {
     if (packetForPhone) {
-        service->releaseToPool(packetForPhone); // we just copied the bytes, so don't need this buffer anymore
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+        if (service->isBucketOwnedPacket(packetForPhone)) {
+            // Bucket-owned: lives in MeshService::toPhoneBucketStaging, no
+            // pool release. Staging is reused on next getForPhone().
+            service->releaseBucketSlotForPhone(packetForPhone);
+        } else
+#endif
+        {
+            service->releaseToPool(packetForPhone); // we just copied the bytes, so don't need this buffer anymore
+        }
         packetForPhone = NULL;
     }
 }

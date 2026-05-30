@@ -15,6 +15,7 @@
 #include "StaticPointerQueue.h"
 #endif
 #include "mesh-pb-constants.h"
+#include "TextBucketStore.h"
 #if defined(ARCH_PORTDUINO)
 #include "../platform/portduino/SimRadio.h"
 #endif
@@ -78,6 +79,23 @@ class MeshService
     /// Updated in loop() to detect when fromNum changes
     uint32_t oldFromNum = 0;
 
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+    // DL9SAU: parallel side-ring of seq_nos for the legacy toPhoneQueue,
+    // so getForPhone() can merge-sort by seq_no across the legacy queue and
+    // the text buckets. Mirrors toPhoneQueue's head/tail strictly — every
+    // enqueue/dequeue/eviction on the legacy queue must also touch this ring.
+    uint32_t legacySeqRing[MAX_RX_TOPHONE] = {};
+    uint8_t legacyRingHead = 0;
+    uint8_t legacyRingTail = 0;
+    uint8_t legacyRingCount = 0;
+
+    // Staging buffer for the current bucket-owned packet handed out to
+    // PhoneAPI. Single slot — PhoneAPI processes one packetForPhone at a
+    // time, so reuse is safe. Pointer compare against this buffer drives
+    // the ownership check in PhoneAPI::releasePhonePacket().
+    meshtastic_MeshPacket toPhoneBucketStaging = {};
+#endif
+
   public:
     enum APIState {
         STATE_DISCONNECTED, // Initial state, no API is connected
@@ -115,10 +133,20 @@ class MeshService
 
     /// Return the next packet destined to the phone.  FIXME, somehow use fromNum to allow the phone to retry the
     /// last few packets if needs to.
-    meshtastic_MeshPacket *getForPhone() { return toPhoneQueue.dequeuePtr(0); }
+    meshtastic_MeshPacket *getForPhone();
 
     /// Allows the bluetooth handler to free packets after they have been sent
     void releaseToPool(meshtastic_MeshPacket *p) { packetPool.release(p); }
+
+#if DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+    /// DL9SAU: true if `p` points into a TextBucketStore slot (not the
+    /// packetPool). Used by PhoneAPI to route the right cleanup.
+    bool isBucketOwnedPacket(const meshtastic_MeshPacket *p) const;
+
+    /// DL9SAU: release a bucket-owned slot (NOT packetPool) after PhoneAPI
+    /// has copied the packet bytes into its own scratch buffer.
+    void releaseBucketSlotForPhone(meshtastic_MeshPacket *p);
+#endif
 
     /// Return the next QueueStatus packet destined to the phone.
     meshtastic_QueueStatus *getQueueStatusForPhone() { return toPhoneQueueStatusQueue.dequeuePtr(0); }

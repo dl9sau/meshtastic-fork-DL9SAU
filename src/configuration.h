@@ -562,5 +562,76 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define HAS_SCREEN 0
 #endif
 
+// =========================================================================
+// DL9SAU: typed text-message buckets in front of toPhoneQueue
+//
+// Splits TEXT_MESSAGE_APP packets out of the shared toPhoneQueue into 4
+// typed queues so that DMs cannot be evicted by chatty channels. Non-text
+// packets (telemetry, position, admin, ...) keep using the legacy queue.
+// See Wishlist-DL9SAU.md 2026-05-30 for the design rationale.
+//
+// Master switch — opt-out via platformio.ini, e.g.:
+//   [env:my_variant]
+//   build_flags = ${env.build_flags}
+//                 -DDL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH=0
+//
+// Default-on cost on T1000e (nRF52840, 256 KB RAM):
+//   * ~28 KB BSS for the 80 static slots (sizeof(MeshPacket) ~350 B)
+//   * ~2 KB extra .text
+//   * Flash files /msgs/text_private.dat + /msgs/text_dm.dat (debounced)
+//
+// Tunables for resource-constrained variants (override in platformio.ini):
+//
+//   TUNABLE 1 — halve slot counts when RAM is tight (e.g. ESP32-classic
+//   without PSRAM, where MAX_RX_TOPHONE is only 8 anyway):
+//     build_flags = ${env.build_flags}
+//                   -DDL9SAU_BUCKET_PRIMARY_SLOTS=4
+//                   -DDL9SAU_BUCKET_HASHTAG_SLOTS=12
+//                   -DDL9SAU_BUCKET_PRIVATE_SLOTS=12
+//                   -DDL9SAU_BUCKET_DM_SLOTS=12
+//   Saves ~14 KB BSS while keeping the full bucket logic.
+//
+//   TUNABLE 2 — disable flash persistence per bucket when you want pure
+//   RAM-only (privacy-first, like MeshCore) or fear flash wear on a
+//   message-heavy deployment:
+//     build_flags = ${env.build_flags}
+//                   -DDL9SAU_BUCKET_PRIVATE_FLASH=0
+//                   -DDL9SAU_BUCKET_DM_FLASH=0
+//   The buckets still work in RAM; only restore-after-reboot is sacrificed.
+// =========================================================================
+#ifndef DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH
+#define DL9SAU_TOPHONE_TEXT_MESSAGE_BUCKETS_FOR_STORE_RAM_AND_FLASH 1
+#endif
+
+// Per-bucket slot counts (RAM static allocation). One MeshPacket per slot.
+#ifndef DL9SAU_BUCKET_PRIMARY_SLOTS
+#define DL9SAU_BUCKET_PRIMARY_SLOTS 8
+#endif
+#ifndef DL9SAU_BUCKET_HASHTAG_SLOTS
+#define DL9SAU_BUCKET_HASHTAG_SLOTS 24
+#endif
+#ifndef DL9SAU_BUCKET_PRIVATE_SLOTS
+#define DL9SAU_BUCKET_PRIVATE_SLOTS 24
+#endif
+#ifndef DL9SAU_BUCKET_DM_SLOTS
+#define DL9SAU_BUCKET_DM_SLOTS 24
+#endif
+
+// Flash persistence per bucket (1 = save on dirty + restore on boot).
+// PRIMARY and HASHTAG are hard RAM-only per spec, no toggle.
+#ifndef DL9SAU_BUCKET_PRIVATE_FLASH
+#define DL9SAU_BUCKET_PRIVATE_FLASH 1
+#endif
+#ifndef DL9SAU_BUCKET_DM_FLASH
+#define DL9SAU_BUCKET_DM_FLASH 1
+#endif
+
+// Debounce window before flushing dirty buckets to flash. Default 5 min so
+// chatty DM threads don't grind the flash. Tune down for "every change must
+// survive a power loss" scenarios, up for ultra-conservative wear control.
+#ifndef DL9SAU_BUCKET_FLASH_DEBOUNCE_MS
+#define DL9SAU_BUCKET_FLASH_DEBOUNCE_MS (5 * 60 * 1000UL)
+#endif
+
 #include "DebugConfiguration.h"
 #include "RF95Configuration.h"
