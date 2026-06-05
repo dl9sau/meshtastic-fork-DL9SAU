@@ -4,6 +4,27 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-06-05  Stage 5b — fix self-cancel on Stage 5 delayed broadcasts
+-------------------------------------------------------------
+Stage 5 set tx_after on broadcast relays for CLIENT_BASE so
+our hop_limit=0 copy would land on empty neighbour TX queues.
+But during our delay window, hearing another relay still
+triggered perhapsCancelDupe -> Router::cancelSending on our
+own queued copy, because roleAllowsCancelingDupe for
+CLIENT_BASE only protected favorited from/to.
+
+Result: the exact inside-CLIENT_MUTE outage Stage 5 was
+supposed to prevent could still happen if another outdoor
+relay was heard during our 3 s wait — neighbour's relay
+canceled our planned transmit -> inside device shielded from
+all outdoor relays, missed the packet.
+
+Fix: roleAllowsCancelingDupe now returns false unconditionally
+for CLIENT_BASE broadcasts when Stage 5 is enabled. DM
+behaviour unchanged (favorited from/to keeps protection,
+others still cancel). Three lines in FloodingRouter.cpp.
+
+
 2026-06-05  Stage 5 — delayed broadcast relay on CLIENT_BASE
 ------------------------------------------------------------
 Mitigates Stage 2's hop_limit=0 side effect: neighbours that

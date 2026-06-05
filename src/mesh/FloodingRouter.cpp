@@ -127,6 +127,17 @@ bool FloodingRouter::roleAllowsCancelingDupe(const meshtastic_MeshPacket *p)
     }
 
     if (config.device.role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE) {
+#if DL9SAU_STAGE5_BROADCAST_RELAY_DELAY
+        // DL9SAU Stage 5b: CLIENT_BASE never self-cancels broadcasts. The
+        // Stage 5 delay was meant to land our hop_limit=0 copy on empty
+        // neighbour queues, but perhapsCancelDupe was still trimming our
+        // own delayed copy when we heard another relay during the wait —
+        // exactly the inside-CLIENT_MUTE outage scenario we were trying
+        // to prevent. Broadcasts go out unconditionally; DMs keep upstream
+        // (favorite-protected) behaviour.
+        if (isBroadcast(p->to))
+            return false;
+#endif
         // CLIENT_BASE: if the packet is from or to a favorited node,
         // we should act like a ROUTER and should never cancel a rebroadcast (i.e. we should always rebroadcast),
         // even if we've heard another station rebroadcast it already.
