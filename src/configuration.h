@@ -633,5 +633,57 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define DL9SAU_BUCKET_FLASH_DEBOUNCE_MS (5 * 60 * 1000UL)
 #endif
 
+// =========================================================================
+// DL9SAU Stage 5: delay-buffered broadcast relay for CLIENT_BASE
+//
+// Background: Stage 2's B2-default sets hop_limit=0 on CLIENT_BASE relays
+// to spare downstream airtime. Side effect: neighbours that already
+// queued the original for rebroadcast may cancel via perhapsCancelDupe
+// when they hear our hop_limit=0 copy, suppressing legitimate
+// downstream propagation.
+//
+// Stage 5 mitigates: for BROADCAST packets only, delay our relay by a
+// mode-dependent window so neighbour TX queues have drained before our
+// hop_limit=0 copy arrives. DMs keep immediate forwarding (interactivity
+// > corner-case cancel). No self-cancel — we always send after delay,
+// because CLIENT_BASE may be the only relay path for an inside
+// CLIENT_MUTE.
+//
+// See Wishlist-DL9SAU.md 2026-06-05 for the full rationale.
+// =========================================================================
+#ifndef DL9SAU_STAGE5_BROADCAST_RELAY_DELAY
+#define DL9SAU_STAGE5_BROADCAST_RELAY_DELAY 1
+#endif
+
+// Per-preset delay defaults (ms). Tunable in platformio.ini.
+#ifndef DL9SAU_STAGE5_DELAY_MS_VLONGSLOW
+#define DL9SAU_STAGE5_DELAY_MS_VLONGSLOW 8000
+#endif
+#ifndef DL9SAU_STAGE5_DELAY_MS_LONGSLOW
+#define DL9SAU_STAGE5_DELAY_MS_LONGSLOW 5000
+#endif
+#ifndef DL9SAU_STAGE5_DELAY_MS_LONGMOD
+#define DL9SAU_STAGE5_DELAY_MS_LONGMOD 5000
+#endif
+#ifndef DL9SAU_STAGE5_DELAY_MS_LONGFAST
+#define DL9SAU_STAGE5_DELAY_MS_LONGFAST 3000
+#endif
+#ifndef DL9SAU_STAGE5_DELAY_MS_MEDIUMSLOW
+#define DL9SAU_STAGE5_DELAY_MS_MEDIUMSLOW 2000
+#endif
+#ifndef DL9SAU_STAGE5_DELAY_MS_MEDIUMFAST
+#define DL9SAU_STAGE5_DELAY_MS_MEDIUMFAST 1500
+#endif
+#ifndef DL9SAU_STAGE5_DELAY_MS_SHORTSLOW
+#define DL9SAU_STAGE5_DELAY_MS_SHORTSLOW 1500
+#endif
+#ifndef DL9SAU_STAGE5_DELAY_MS_SHORTFAST
+#define DL9SAU_STAGE5_DELAY_MS_SHORTFAST 800
+#endif
+// Fallback for unknown / custom presets — generous LongFast-style window.
+#ifndef DL9SAU_STAGE5_DELAY_MS_DEFAULT
+#define DL9SAU_STAGE5_DELAY_MS_DEFAULT 3000
+#endif
+
 #include "DebugConfiguration.h"
 #include "RF95Configuration.h"

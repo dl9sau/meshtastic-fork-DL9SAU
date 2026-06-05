@@ -4,6 +4,43 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-06-05  Stage 5 — delayed broadcast relay on CLIENT_BASE
+------------------------------------------------------------
+Mitigates Stage 2's hop_limit=0 side effect: neighbours that
+already queued the original for rebroadcast were cancelling
+via perhapsCancelDupe when they heard our hop_limit=0 copy,
+suppressing legitimate downstream propagation.
+
+For CLIENT_BASE broadcast packets only:
+  * delay our relay by a mode-dependent window (3 s on
+    LongFast, 5 s LongMod, 8 s VLongSlow, ...)
+  * then transmit with hop_limit=0 as before
+
+By the time we transmit, neighbour TX queues for that packet
+are empty, so perhapsCancelDupe is harmless. Downstream nodes
+reachable only via us still get the packet, just later.
+
+DM relays UNCHANGED: still immediate, no delay. Interactivity
+matters more than the narrow cancel-dupe corner case (and DM
+has ack-retry).
+
+Explicit NO self-cancel: we always transmit after the delay,
+even if we heard another relay in the meantime. Rationale:
+CLIENT_BASE may be the only relay path for an inside
+CLIENT_MUTE that can't hear other outdoor relays.
+
+Mechanism: meshtastic_MeshPacket.tx_after is set in
+FloodingRouter::applyClientRepeatPolicy before the relay
+enters the TX queue. RadioLibInterface::startSend already
+respects this field (originally used by ROUTER_LATE).
+
+Configurable: DL9SAU_STAGE5_BROADCAST_RELAY_DELAY default 1
+(opt-out). Per-preset delays via
+DL9SAU_STAGE5_DELAY_MS_<PRESET> in configuration.h.
+
+Files: src/configuration.h, src/mesh/FloodingRouter.{h,cpp}.
+
+
 2026-05-30  Typed text-message buckets in front of toPhoneQueue
 ---------------------------------------------------------------
 Splits TEXT_MESSAGE_APP packets out of the shared toPhoneQueue

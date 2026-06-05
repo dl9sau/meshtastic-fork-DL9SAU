@@ -106,4 +106,14 @@ class FloodingRouter : public Router
      *         false to abort the rebroadcast.
      */
     bool applyClientRepeatPolicy(meshtastic_MeshPacket *tosend);
+
+#if DL9SAU_STAGE5_BROADCAST_RELAY_DELAY
+    /**
+     * DL9SAU Stage 5: per-modem-preset delay (ms) for CLIENT_BASE
+     * broadcast relays. Picked so that other neighbours' rebroadcast
+     * windows are over by the time we transmit, making our
+     * hop_limit=0 copy harmless to perhapsCancelDupe.
+     */
+    uint32_t stage5DelayForPreset() const;
+#endif
 };

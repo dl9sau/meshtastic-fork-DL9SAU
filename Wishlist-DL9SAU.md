@@ -5,6 +5,68 @@ Auf den hier festgehaltenen Stand spaeter zurueckkommen.
 
 ---
 
+## 2026-06-05 — Stage 5: Delay-buffered broadcast relay for CLIENT_BASE
+
+### Motivation
+
+Stage 2's B2-default setzt `hop_limit=0` auf CLIENT_BASE-Relays um Downstream-Air-Time zu sparen. Nebeneffekt aus `FloodingRouter::perhapsCancelDupe` (`src/mesh/FloodingRouter.cpp:140-147`): Nachbarn mit Rolle CLIENT (oder CLIENT_BASE-non-favorited) die das Original schon gehoert und fuer Wiederholung eingequeuet hatten, **canceln** ihre Wiederholung wenn sie unseren `hop_limit=0`-Relay hoeren. Folge: Downstream-Nodes die nur ueber jene Nachbarn erreicht werden, sehen das Paket nicht.
+
+### Idee
+
+Statt sofort mit `hop_limit=0` zu relayen: **mode-abhaengig verzoegern**, dann mit `hop_limit=0` senden. Bis dahin haben alle anderen Relays ihren Versuch durchgefuehrt (oder selber gecancelled). Unser nachgeschobener `hop_limit=0`-Relay trifft auf eine leere TX-Queue der Nachbarn → `perhapsCancelDupe` ist harmlos. Downstream-Nodes die nur uns hoeren bekommen das Paket trotzdem, nur spaeter.
+
+**Explizit KEIN Self-Cancel:** Wenn wir waehrend des Delays einen anderen Relay hoeren, senden wir trotzdem. Begruendung: CLIENT_BASE auf Dach/Balkon kann der einzige Relay sein fuer ein CLIENT_MUTE drinnen — Schweigen wegen anderer Outdoor-Relays wuerde Inside-Geraet aushungern.
+
+### Scope
+
+Nur **B2-default Broadcasts** auf **CLIENT_BASE**:
+
+| Pakettyp | Stage-5-Behandlung |
+|---|---|
+| DM, B3 (favorite + direkter Nachbar) | unveraendert — sofort, full hops |
+| DM, B3 (first-relay) | unveraendert — sofort, full hops |
+| DM, B2-transit | **unveraendert — sofort, hop_limit=0** (Latenz wichtiger als Cancel-Vermeidung) |
+| Broadcast (Text/Position/NodeInfo/Admin/Alert/Waypoint/SF/KeyVerification) | **NEU: delay + hop_limit=0, kein Self-Cancel** |
+| Telemetry / non-Whitelist | unveraendert — Drop |
+
+### Delay-Tabelle (mode-abhaengig)
+
+Faustregel: groesser als typischer `getTxDelayMsecWeightedWorst()` der anderen Nodes im selben Preset.
+
+| Modem-Preset | Delay |
+|---|---|
+| `VLongSlow` (SF12/BW125) | 8000 ms |
+| `LongMod` (SF11/BW125) | 5000 ms |
+| `LongFast` (SF11/BW250) | 3000 ms |
+| `MediumSlow` (SF10/BW250) | 2000 ms |
+| `MediumFast` (SF9/BW250) | 1500 ms |
+| `ShortFast` (SF7/BW250) | 800 ms |
+| `ShortSlow` (default) | 1500 ms |
+| Custom / Unknown | 3000 ms (LongFast-Fallback) |
+
+Compile-time tunable via `DL9SAU_STAGE5_DELAY_MS_<preset>` Sub-Defines.
+
+### Implementations-Mechanik
+
+Meshtastic hat schon das richtige Werkzeug: `meshtastic_MeshPacket.tx_after` (millis-Zeitstempel ab dem die TX-Queue das Paket senden darf). ROUTER_LATE nutzt es via `clampToLateRebroadcastWindow` (`src/mesh/RadioLibInterface.cpp:464`).
+
+Wir setzen `tx_after = millis() + stage5DelayForPreset()` direkt in `applyClientRepeatPolicy` (`FloodingRouter.cpp:163-243`) vor dem Return, im B2-default-Pfad fuer Broadcasts auf CLIENT_BASE. Beim Enqueue in den TX-Layer respektiert `RadioLibInterface::startSend` das `tx_after` Field und schedulet via `notifyLater`.
+
+### Bekannte Trade-Offs
+
+- **Broadcast-Latenz** +3 s (bei LongFast) fuer Downstream-Nodes die nur ueber uns erreichbar sind. Akzeptabel fuer Channel-Chat, Position, NodeInfo.
+- **DM-Transit:** Sofort-Relay bleibt → seltener Corner-Case wo unser Relay einen besseren Nachbarn-Relay canceln koennte. Bewusst akzeptiert (Interaktivitaet zaehlt mehr; DM hat Ack-Retry).
+- **Keine Probe-then-skip:** Wenn jemand anders im Delay-Window relaied, senden wir trotzdem. Bei dichten Mesh-Setups etwas redundant, aber notwendig fuer Inside-Geraete-Versorgung.
+
+### Files (geplant)
+
+- `src/configuration.h` — neue Defines fuer Stage 5
+- `src/mesh/FloodingRouter.cpp` (`applyClientRepeatPolicy`) — tx_after setzen
+- `src/mesh/FloodingRouter.cpp` oder neuer Helper — `stage5DelayForPreset()`
+- `Changelog-DL9SAU.txt` — Stage-5-Eintrag
+
+---
+
 ## 2026-05-29 — Message-Storage / Phone-Replay vs. MeshCore
 
 ### Status quo (Meshtastic HEAD)

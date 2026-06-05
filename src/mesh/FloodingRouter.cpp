@@ -238,9 +238,51 @@ bool FloodingRouter::applyClientRepeatPolicy(meshtastic_MeshPacket *tosend)
     // standard hop budget because it may sit at a bridge position.
     if (role == meshtastic_Config_DeviceConfig_Role_CLIENT_BASE) {
         tosend->hop_limit = 0;
+#if DL9SAU_STAGE5_BROADCAST_RELAY_DELAY
+        // Stage 5: delay our hop_limit=0 broadcast relay so it lands on the
+        // neighbours' TX queues *after* they have already relayed (or
+        // dropped) the original. perhapsCancelDupe on an empty queue is a
+        // no-op, so we no longer suppress legitimate downstream propagation.
+        // DMs keep immediate forwarding — interactivity wins over the
+        // narrower cancel-dupe corner case.
+        // No self-cancel: even if we hear another relay during the window
+        // we still transmit, because CLIENT_BASE may be the only relay
+        // path for an inside CLIENT_MUTE that doesn't hear the other one.
+        if (isBroadcast(tosend->to)) {
+            const uint32_t delayMs = stage5DelayForPreset();
+            tosend->tx_after = millis() + delayMs;
+            LOG_DEBUG("DL9SAU Stage 5: delay broadcast relay 0x%08x by %ums", tosend->id, (unsigned)delayMs);
+        }
+#endif
     }
     return true;
 }
+
+#if DL9SAU_STAGE5_BROADCAST_RELAY_DELAY
+uint32_t FloodingRouter::stage5DelayForPreset() const
+{
+    switch (config.lora.modem_preset) {
+    case meshtastic_Config_LoRaConfig_ModemPreset_VERY_LONG_SLOW:
+        return DL9SAU_STAGE5_DELAY_MS_VLONGSLOW;
+    case meshtastic_Config_LoRaConfig_ModemPreset_LONG_SLOW:
+        return DL9SAU_STAGE5_DELAY_MS_LONGSLOW;
+    case meshtastic_Config_LoRaConfig_ModemPreset_LONG_MODERATE:
+        return DL9SAU_STAGE5_DELAY_MS_LONGMOD;
+    case meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST:
+        return DL9SAU_STAGE5_DELAY_MS_LONGFAST;
+    case meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_SLOW:
+        return DL9SAU_STAGE5_DELAY_MS_MEDIUMSLOW;
+    case meshtastic_Config_LoRaConfig_ModemPreset_MEDIUM_FAST:
+        return DL9SAU_STAGE5_DELAY_MS_MEDIUMFAST;
+    case meshtastic_Config_LoRaConfig_ModemPreset_SHORT_SLOW:
+        return DL9SAU_STAGE5_DELAY_MS_SHORTSLOW;
+    case meshtastic_Config_LoRaConfig_ModemPreset_SHORT_FAST:
+        return DL9SAU_STAGE5_DELAY_MS_SHORTFAST;
+    default:
+        return DL9SAU_STAGE5_DELAY_MS_DEFAULT;
+    }
+}
+#endif
 
 void FloodingRouter::sniffReceived(const meshtastic_MeshPacket *p, const meshtastic_Routing *c)
 {
