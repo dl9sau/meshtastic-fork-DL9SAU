@@ -5,6 +5,51 @@ Auf den hier festgehaltenen Stand spaeter zurueckkommen.
 
 ---
 
+## 2026-06-06 — Mobile NodeDB-Aging via Distanz + Zeit ❌ LOHNT NICHT (erledigt)
+
+**Status:** Diskutiert, **nicht implementiert**, vermutlich auch nicht noetig.
+
+### Ursprungsidee
+
+Auf Reisen Knoten loeschen die weit weg sind:
+- CLIENT-Familie: > 3 km, seit > 1 h
+- ROUTER/REPEATER-Familie: > 10 km, seit > 1 h
+
+### Warum die einfache Distanz-Regel haengt
+
+LoRa-Reichweite ist nicht distanz-basiert sondern terrain-basiert:
+- Berg-Repeater 25 km Line-of-Sight: bestens erreichbar
+- CLIENT 800 m im Haeuserschatten: unerreichbar
+- Stadt-Spaziergang ueberschreitet temporaer 3 km Radius → wuerde gute Nachbarn verlieren
+
+### Refinierter Algorithmus (waere die saubere Variante)
+
+**Trigger:** `numMeshNodes > 0.85 * MAX_NUM_NODES` **UND** mobil (GPS-Speed > 5 km/h oder Position drifted > 5 km/h).
+
+**Eviction-Reihenfolge:**
+1. Niemals Favoriten loeschen
+2. `last_heard > 6 h` darf weg (Zeit-Backstop, unabhaengig von allem)
+3. Mit Position und distanz-fern: CLIENT-Familie > 10 km, ROUTER-Familie > 50 km
+4. Ohne Position konservativ behalten
+
+### Warum trotzdem nicht implementieren
+
+- **Meshtastic hat keine eingebaute Aging-Mechanik** (`cleanupMeshDB()` putzt nur incomplete-Eintraege). Insofern ein **echter Gap** im Upstream.
+- ABER: bei `MAX_NUM_NODES=80` (nRF52) / 100 (sonst) gibt's selten echten Druck im Normalbetrieb
+- **Risiko der Falsch-Eviction** (Berg-Repeater verlieren) > erwarteter Nutzen
+- **Real-World-Daten fehlen** — ohne Beobachtung in der Praxis ist's spekulative Optimierung
+
+### Wann doch reaktivieren
+
+Nur wenn auf Reisen tatsaechlich beobachtet wird:
+- NodeDB regelmaessig voll (`isFull()` triggert oft)
+- Knoten ausgesperrt die eingetragen sein sollten
+- Routing-Entscheidungen durch stale Knoten verfaelscht
+
+Dann **ja, refinierte Variante umsetzen**. Aber nicht spekulativ.
+
+---
+
 ## 2026-06-05 — Stage 5: Delay-buffered broadcast relay for CLIENT_BASE
 
 ### Motivation
