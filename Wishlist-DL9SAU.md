@@ -5,6 +5,60 @@ Auf den hier festgehaltenen Stand spaeter zurueckkommen.
 
 ---
 
+## 2026-06-07 — Stage 6: alternierende Companion-Bake fuer non-LF Region + non-default Preset
+
+**Status:** Designed, **nicht implementiert**. Nach Reise umsetzen.
+
+### Motivation
+
+Stage 4 sendet aktuell ~1×/h eine Position-Companion-Bake auf LongFast wenn das aktuelle Preset != LongFast ist. Hintergrund: Lost-Device-Recovery — Touristen-Geraete defaulten auf LF, also kann ein zufaelliger LF-User dich hoeren.
+
+**Sonderfall:** Wir sind in einer **nicht-LF Region** (z.B. Berlin = MediumFast) **und** haben aus persoenlichen Gruenden das Preset weiter veraendert (z.B. von MF auf MediumSlow). Dann erreichen unsere normalen Broadcasts **weder** Berlin-Locals (auf MF) **noch** LF-Touristen.
+
+### Entscheidungsmatrix
+
+| Mein Preset | Region-Default | Normale Bake | Stage-4 Companion |
+|---|---|---|---|
+| LongFast | egal | LF | – (keine) |
+| != LF | LongFast | mein Preset | LF |
+| == Region-Default | != LF | Region-Default (z.B. MF) | LF (fuer LF-Touristen) |
+| **!= Region-Default UND != LF** | **!= LF** | mein Preset (z.B. MS) | **alternierend LF und Region-Default** |
+
+Throttle bleibt 1×/h Gesamtfrequenz Companion-Output. Air-Time identisch zu heute.
+
+### Logik-Skizze
+
+```c
+ModemPreset nextCompanionPreset() {
+    auto current = config.lora.modem_preset;
+    auto region_default = GeoPresetSwitcher::regionDefaultPreset(); // NEU
+
+    if (current == LONG_FAST) return NONE;
+    if (region_default == LONG_FAST) return LONG_FAST;       // klassisch
+    if (region_default == current)   return LONG_FAST;       // klassisch (Locals erreicht durch normale Bake)
+
+    // Sonderfall: weder Locals noch LF-User erreicht — alterniere
+    static uint8_t count = 0;
+    return (count++ % 2 == 0) ? LONG_FAST : region_default;
+}
+```
+
+### Implementierungs-TODO
+
+1. **`GeoPresetSwitcher::regionDefaultPreset()` Accessor** — Stage 3 hat schon eine region→preset Tabelle, brauchen nur eine Lookup-Methode die per aktueller Position das Default-Preset zurueckgibt
+2. **Stage-4-Companion-Code generalisieren** — heute hartcoded auf LongFast. `setupCompanionDefaultPresetCrypto(preset)` existiert schon (`Channels.h:110`), funktioniert vermutlich auch fuer andere Presets
+3. **State fuer Alternation** — static counter im Stage-4-Module reicht (Persistenz ueber Reboot nicht noetig; nach Reboot startet wieder mit LF, fair)
+4. **Edge Cases testen:**
+   - GPS noch nicht gelockt → `region_default = LONG_FAST` fallback
+   - In Region-Grenzgebiet, Region wechselt → unkritisch, Counter laeuft weiter
+   - Crypto-Setup-Bugs aehnlich Stage-4-Follow-ups (Channel-Hash vs Channel-Index) — vorsicht!
+
+### Aufwand
+
+~30-50 Zeilen Code. Sorgfaeltig zu testen wegen Crypto-Setup (siehe `companion_crypto_ready` Logik in Router.cpp aus Stage 4 Follow-ups).
+
+---
+
 ## 2026-06-06 — Mobile NodeDB-Aging via Distanz + Zeit ❌ LOHNT NICHT (erledigt)
 
 **Status:** Diskutiert, **nicht implementiert**, vermutlich auch nicht noetig.
