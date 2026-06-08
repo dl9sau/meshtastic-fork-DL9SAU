@@ -5,9 +5,15 @@ Auf den hier festgehaltenen Stand spaeter zurueckkommen.
 
 ---
 
-## 2026-06-07 — Stage 6: alternierende Companion-Bake fuer non-LF Region + non-default Preset
+## 2026-06-07 — Stage 6: alternierende Companion-Bake fuer non-LF Region + non-default Preset ✅ DONE
 
-**Status:** Designed, **nicht implementiert**. Nach Reise umsetzen.
+**Status:** Implementiert 2026-06-08 in Commit `9717fb4b1`. Build-Kosten: +144 B Flash, 0 RAM.
+
+Files: `src/configuration.h`, `src/mesh/GeoPresetSwitcher.{h,cpp}` (neuer Accessor `regionDefaultPreset()`), `src/modules/PositionModule.{h,cpp}` (Decision-Matrix + Alternation-Counter), `Changelog-DL9SAU.txt`.
+
+Master-Switch `DL9SAU_STAGE6_ALTERNATING_COMPANION` default 1.
+
+Vor-Ort-Test in Berlin geplant — bei MS-Preset alternieren LF/MF im ~1h-Rhythmus.
 
 ### Motivation
 
