@@ -65,22 +65,39 @@ class PositionModule : public ProtobufModule<meshtastic_Position>, private concu
     bool hasGPS();
     uint32_t lastSentReply = 0; // Last time we sent a position reply (used for reply throttling only)
 
-    /** DL9SAU Stage 4: timestamp (millis) of the last LongFast companion
-     *  beacon. Used to gate the once-per-hour cadence. 0 = never sent
-     *  since boot. */
+    /** DL9SAU Stage 4: timestamp (millis) of the last companion beacon.
+     *  Used to gate the once-per-hour cadence. 0 = never sent since
+     *  boot. */
     uint32_t lastLongFastBeaconMs = 0;
 
-    /** DL9SAU Stage 4: send a LongFast companion position beacon if the
-     *  current preset is not LongFast and at least one hour has passed
-     *  since the last companion. Called at the end of sendOurPosition().
+#if DL9SAU_STAGE6_ALTERNATING_COMPANION
+    /** DL9SAU Stage 6: counter that alternates the companion preset
+     *  between LongFast and the region-default when we are in a non-LF
+     *  region AND our current preset differs from the region default
+     *  (e.g. Berlin = MediumFast, we are on MediumSlow). Reset to 0 on
+     *  reboot — fair enough, the first companion after boot will be on
+     *  LongFast. */
+    uint8_t companionAlternateCount = 0;
+
+    /** DL9SAU Stage 6: pick the next companion preset based on the
+     *  4-case decision matrix. Returns LongFast in the classic cases
+     *  (Fall 2 + 3); alternates between LongFast and region-default
+     *  only in Fall 4. */
+    meshtastic_Config_LoRaConfig_ModemPreset pickCompanionPreset();
+#endif
+
+    /** DL9SAU Stage 4: send a companion position beacon if the current
+     *  preset is not LongFast and at least one hour has passed since
+     *  the last companion. Called at the end of sendOurPosition().
      *  positionHopLimit carries the hop_limit the regular position was
      *  sent with (already role-capped for CLIENT, default for others),
      *  so the companion inherits the same reach the user asked for.
      *  Channel handling: defaults to the same channel as the normal
      *  position, EXCEPT when that channel's name matches a known modem
      *  preset name AND its PSK is the default (AQ==) — in which case
-     *  the companion is sent on the virtual public default LongFast
-     *  channel so any random finder can decode it. */
+     *  the companion is sent on the virtual public default channel of
+     *  the chosen preset so any random finder can decode it.
+     *  Stage 6 may alternate the chosen preset; see pickCompanionPreset. */
     void maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel, uint8_t positionHopLimit);
 
 #if USERPREFS_EVENT_MODE

@@ -426,6 +426,29 @@ void PositionModule::sendOurPosition(NodeNum dest, bool wantReplies, uint8_t cha
     }
 }
 
+#if DL9SAU_STAGE6_ALTERNATING_COMPANION
+meshtastic_Config_LoRaConfig_ModemPreset PositionModule::pickCompanionPreset()
+{
+    const auto current = config.lora.modem_preset;
+    const auto region_default = geoPresetSwitcher.regionDefaultPreset();
+    constexpr auto LF = meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+
+    // Fall 2: in an LF region. LF strangers cover everyone, no non-LF
+    // locals exist — only LF companion needed.
+    if (region_default == LF)
+        return LF;
+
+    // Fall 3: our normal preset already matches the region default. Locals
+    // hear us natively, only LF strangers need the companion.
+    if (region_default == current)
+        return LF;
+
+    // Fall 4: non-LF region AND we deviate from region default. Neither
+    // LF strangers nor region-locals hear our normal broadcasts — alternate.
+    return (companionAlternateCount++ % 2 == 0) ? LF : region_default;
+}
+#endif
+
 void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionChannel, uint8_t positionHopLimit)
 {
     // Skip for infrastructure roles — they have a deliberately chosen
@@ -481,6 +504,16 @@ void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionCh
         LOG_DEBUG("Stage 4: allocPositionPacket returned null for companion");
         return;
     }
+    // DL9SAU Stage 6: choose which preset the companion goes on.
+    // Defaults to LongFast (classic Stage 4 behaviour). Alternates with
+    // the region default when both current and region default are
+    // non-LongFast.
+#if DL9SAU_STAGE6_ALTERNATING_COMPANION
+    const meshtastic_Config_LoRaConfig_ModemPreset companionPreset = pickCompanionPreset();
+#else
+    const meshtastic_Config_LoRaConfig_ModemPreset companionPreset = meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+#endif
+
     companion->to = dest;
     companion->decoded.want_response = false;
     companion->priority = meshtastic_MeshPacket_Priority_BACKGROUND;
@@ -488,13 +521,13 @@ void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionCh
     // CLIENT → typically 2, CLIENT_BASE / TRACKER / SENSOR / ... →
     // whatever the user configured (vanilla).
     companion->hop_limit = positionHopLimit;
-    // Preset override → SF/BW/CR switched to LongFast by startSend()
+    // Preset override → SF/BW/CR switched to the chosen preset by startSend()
     companion->has_tx_preset_override = true;
-    companion->tx_preset_override = (uint8_t)meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+    companion->tx_preset_override = (uint8_t)companionPreset;
 
     if (channelIsPublicDefault) {
         // Virtual public default channel: caller-managed crypto + hash.
-        int16_t hash = channels.setupCompanionDefaultPresetCrypto(meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST);
+        int16_t hash = channels.setupCompanionDefaultPresetCrypto(companionPreset);
         if (hash < 0) {
             // Couldn't set up — fall back to the position channel.
             companion->channel = positionChannel;
@@ -509,7 +542,10 @@ void PositionModule::maybeSendLongFastCompanion(NodeNum dest, uint8_t positionCh
     }
 
     lastLongFastBeaconMs = now;
-    LOG_INFO("DL9SAU Stage 4: emit LongFast companion (channel %s)", channelIsPublicDefault ? "VIRTUAL-LongFast" : "same-as-pos");
+    const char *companionPresetName =
+        DisplayFormatters::getModemPresetDisplayName(companionPreset, false, true);
+    LOG_INFO("DL9SAU Stage 4/6: emit %s companion (channel %s)", companionPresetName ? companionPresetName : "?",
+             channelIsPublicDefault ? "VIRTUAL-default" : "same-as-pos");
     // ccToPhone=false: companion is a wire-only beacon for external
     // finders. The regular position was already cc'd to the phone with
     // its real channel; cc'ing the virtual-channel companion would just

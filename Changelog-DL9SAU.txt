@@ -4,6 +4,40 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-06-08  Stage 6 — alternating companion beacon for non-LF region + non-default preset
+-----------------------------------------------------------------------------
+Refines Stage 4's lost-device-recovery companion beacon for
+the edge case where we are in a region with a non-LongFast
+default (e.g. Berlin = MediumFast) AND have manually picked
+yet another non-default preset (e.g. MediumSlow).
+
+Without Stage 6: normal broadcasts on MediumSlow reach
+neither LongFast strangers nor MediumFast Berlin locals.
+Stage 4 companion covers LongFast strangers only.
+
+With Stage 6: every hour the companion alternates between
+LongFast (for strangers) and the region default (for locals).
+Throttle stays 1 companion per hour.
+
+Decision matrix:
+  current == LongFast                       -> no companion
+  region_default == LongFast                -> LongFast (classic Stage 4)
+  region_default == current                 -> LongFast (classic Stage 4)
+  else (Fall 4)                             -> alternate LF / region_default
+
+New: GeoPresetSwitcher::regionDefaultPreset() accessor —
+returns the region-default preset for the current GPS
+position, falls back to LongFast when no fix or outside all
+regions. Used purely read-only, does not trigger a switch.
+
+Master switch DL9SAU_STAGE6_ALTERNATING_COMPANION default 1
+(opt-out). State (companionAlternateCount) is per-boot, not
+persisted — fair enough, post-reboot the first companion is
+on LongFast.
+
+Build cost: +144 B Flash, RAM unchanged.
+
+
 2026-06-05  Stage 5b — fix self-cancel on Stage 5 delayed broadcasts
 -------------------------------------------------------------
 Stage 5 set tx_after on broadcast relays for CLIENT_BASE so

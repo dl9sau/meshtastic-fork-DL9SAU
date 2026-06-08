@@ -685,5 +685,31 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define DL9SAU_STAGE5_DELAY_MS_DEFAULT 3000
 #endif
 
+// =========================================================================
+// DL9SAU Stage 6: alternating companion beacon when in a non-LF region
+// AND on a non-default preset
+//
+// Stage 4 sends a ~1/h LongFast companion position beacon for lost-device
+// recovery whenever the current preset is not LongFast. Stage 6 refines
+// this for the case where we are in a region whose default is also not
+// LongFast (e.g. Berlin = MediumFast), and the user has switched to yet
+// another non-default preset (e.g. MediumSlow). In that case neither
+// random LF travellers nor region-locals on MF hear our normal
+// broadcasts. Stage 6 alternates the companion preset between LongFast
+// and the region default, keeping the throttle at 1 companion per hour.
+//
+// In all other cases Stage 4 behaviour is preserved (LongFast companion
+// when current != LongFast).
+//
+// Decision matrix (see Wishlist-DL9SAU.md 2026-06-07):
+//   current == LongFast                            -> no companion
+//   region_default == LongFast                     -> LongFast (classic)
+//   region_default == current                      -> LongFast (classic)
+//   else                                           -> alternate LF/region
+// =========================================================================
+#ifndef DL9SAU_STAGE6_ALTERNATING_COMPANION
+#define DL9SAU_STAGE6_ALTERNATING_COMPANION 1
+#endif
+
 #include "DebugConfiguration.h"
 #include "RF95Configuration.h"

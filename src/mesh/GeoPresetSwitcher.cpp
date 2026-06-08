@@ -150,6 +150,17 @@ const GeoPresetSwitcher::Region *GeoPresetSwitcher::findRegionFor(int32_t lat_i,
     return nullptr;
 }
 
+meshtastic_Config_LoRaConfig_ModemPreset GeoPresetSwitcher::regionDefaultPreset() const
+{
+    // Without a fix we fall back to LongFast — that's the global default
+    // and matches the "outside all regions" path in evaluate().
+    if (localPosition.latitude_i == 0 && localPosition.longitude_i == 0)
+        return meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+
+    const Region *r = findRegionFor(localPosition.latitude_i, localPosition.longitude_i);
+    return r ? r->preset : meshtastic_Config_LoRaConfig_ModemPreset_LONG_FAST;
+}
+
 void GeoPresetSwitcher::evaluate()
 {
     const uint32_t now = millis();

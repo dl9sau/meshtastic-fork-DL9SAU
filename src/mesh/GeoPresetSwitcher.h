@@ -57,6 +57,12 @@ class GeoPresetSwitcher
      *  config change actually originates from us). */
     bool isAutoSwitchInProgress() const { return autoSwitchInProgress; }
 
+    /** DL9SAU Stage 6: return the region-default modem preset for the
+     *  current GPS position. Returns LongFast when the device is
+     *  outside all known regions, or when no GPS fix is yet available.
+     *  Read-only; does not trigger any switch. */
+    meshtastic_Config_LoRaConfig_ModemPreset regionDefaultPreset() const;
+
   private:
     bool prerequisitesOk() const;
     const Region *findRegionFor(int32_t lat_i, int32_t lon_i) const;
