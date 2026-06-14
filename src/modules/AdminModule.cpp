@@ -23,7 +23,6 @@
 #endif
 
 #include "Default.h"
-#include "DisplayFormatters.h"
 #include "GeoPresetSwitcher.h"
 #include "MeshRadio.h"
 #include "TypeConversions.h"
@@ -859,33 +858,6 @@ void AdminModule::handleSetConfig(const meshtastic_Config &c)
             }
 
             changes = SEGMENT_CONFIG | SEGMENT_MODULECONFIG;
-        }
-
-        // Mirror the preset's bandwidth / spread_factor / coding_rate back into
-        // config.lora when use_preset is true. Some clients (notably the iOS
-        // app) read these fields directly to display the bitrate and refuse to
-        // render a value when they are zero. The radio honors a custom
-        // coding_rate in [LORA_CR_MIN, LORA_CR_MAX] even with use_preset
-        // (see RadioInterface::applyModemConfig), so don't clobber it then.
-        if (config.lora.use_preset && myRegion) {
-            float presetBwKHz = 0;
-            uint8_t presetSf = 0, presetCr = 0;
-            modemPresetToParams(config.lora.modem_preset, myRegion->wideLora, presetBwKHz, presetSf, presetCr);
-            config.lora.bandwidth = bwKHzToCode(presetBwKHz);
-            config.lora.spread_factor = presetSf;
-            if (config.lora.coding_rate < LORA_CR_MIN || config.lora.coding_rate > LORA_CR_MAX) {
-                config.lora.coding_rate = presetCr;
-            }
-            // DL9SAU workaround for meshtastic/Meshtastic-Apple#1192: the
-            // iOS Bandwidth picker tags the 250 kHz row with proto value 0
-            // (all others 1:1). When we mirror the real 250 the picker
-            // can't find a matching tag and falls back to "31 kHz". The
-            // firmware ignores config.lora.bandwidth while use_preset is
-            // true (see RadioInterface::applyModemConfig), so re-writing
-            // 250 -> 0 here is safe and lets iOS render correctly.
-            if (config.lora.bandwidth == 250) {
-                config.lora.bandwidth = 0;
-            }
         }
 
         // DL9SAU: prefer CR=8 over CR=5. The user runs the more redundant

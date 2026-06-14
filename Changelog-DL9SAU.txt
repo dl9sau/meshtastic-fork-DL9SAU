@@ -4,6 +4,39 @@ Changelog — DL9SAU fork of meshtastic/firmware
 Local divergences from upstream master. Entries newest first.
 
 
+2026-06-14  Revert — iOS bandwidth/SF/CR mirror back into config.lora
+---------------------------------------------------------------------
+Removes "Teil A" of the 2026-05-24 AdminModule iOS workaround:
+the block in handleSetConfig that mirrored the active preset's
+bandwidth / spread_factor / coding_rate back into config.lora when
+use_preset=true, plus the round-2 follow-up that rewrote a mirrored
+bandwidth==250 to 0 for the iOS BW picker.
+
+Reason: in field use the workaround did not produce a stable
+bitrate display in the iOS app. The picker keeps falling back to
+nonsense values (BW jumping to 31 kHz, CR shown as 31.125, ...)
+because the iOS-side Bandwidths/CodingRates pickers re-interpret
+the mirrored fields with their own broken tag mapping. The
+firmware can only shift symptoms around, not fix the root cause —
+the fix has to land in Meshtastic-Apple. Keeping the mirror in
+place only adds maintenance surface (and the round-2 BW=250->0
+rewrite confuses users on Android, which displays the literal
+field).
+
+Kept untouched:
+  * Auto-rename of the primary channel on (effective) modem-preset
+    change — works correctly on both iOS and Android and is the
+    trigger for GeoPresetSwitcher::markUserOverride() when the
+    user manually changes the preset via either app.
+  * Position-precision clamp 14 -> 16 in handleSetChannel() —
+    independent of the mirror, still useful for iOS users.
+  * modemPresetForParams() reverse-lookup helper in MeshRadio.h —
+    still used by the auto-rename effective-preset comparison.
+
+Files: src/modules/AdminModule.cpp (mirror block removed, stale
+DisplayFormatters.h include dropped).
+
+
 2026-06-08  Stage 6 — alternating companion beacon for non-LF region + non-default preset
 -----------------------------------------------------------------------------
 Refines Stage 4's lost-device-recovery companion beacon for
