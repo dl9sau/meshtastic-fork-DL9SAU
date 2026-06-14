@@ -28,6 +28,15 @@ Kept untouched:
     change — works correctly on both iOS and Android and is the
     trigger for GeoPresetSwitcher::markUserOverride() when the
     user manually changes the preset via either app.
+    Particularly valuable on Android: renaming the primary channel
+    manually there also re-rolls the channel PSK, forcing the user
+    to know about and re-paste the default PSK "AQ==" by hand to
+    stay on the public default channel. The auto-rename bypasses
+    that whole dance and keeps the default-key channel intact.
+    iOS has the inverse problem — the manual-rename path doesn't
+    re-roll, but the user has no easy way to tell the firmware
+    which preset a hand-entered SF/BW combo corresponds to; the
+    effective-preset comparison covers that case.
   * Position-precision clamp 14 -> 16 in handleSetChannel() —
     independent of the mirror, still useful for iOS users.
   * modemPresetForParams() reverse-lookup helper in MeshRadio.h —
