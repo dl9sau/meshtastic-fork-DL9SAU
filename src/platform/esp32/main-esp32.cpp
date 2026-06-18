@@ -68,12 +68,23 @@ void setBluetoothEnable(bool enable)
             // Bei enableController()==false bleibt Guard gesetzt -- alle
             // NimbleBluetooth-Methoden returnen weiter safe ohne Stack-Call.
         } else if (!enable && nimbleBluetooth->isActive() && !BluetoothPowerControl::isControllerDisabled()) {
-            // Cycle-sleep: Guard setzen + Controller aus. Guard wird
-            // INNERHALB disableController() zuerst gesetzt -- damit
-            // parallel laufende Loops (PowerFSM, BluetoothPhoneAPI
-            // runOnce) nicht in den abgeschalteten Stack rufen.
-            BluetoothPowerControl::disableController();
-            powerMon->clearState(meshtastic_PowerMon_State_BT_On);
+            // Cycle-sleep: Guard setzen + Controller aus.
+            //
+            // 2026-06-18 Phase 0 Hotfix: Skip-when-connected. esp_bt_
+            // controller_disable mitten in aktiver Verbindung hinterlaesst
+            // den Controller-Stack inkonsistent -- bei direkt folgendem
+            // light-sleep (sleep.cpp:206 ruft setBluetoothEnable(false)
+            // VOR light_sleep_start) gibt's Reboot. Beobachtet auf
+            // Heltec WT V1.1 mit Router-Rolle: t=11s connected, t=13s
+            // PowerFSM -> sleep -> reboot.
+            // Defensiv: wenn aktive Verbindung -> kein disable. Verbindung
+            // laeuft natuerlich aus, naechster setBluetoothEnable(false)
+            // greift dann.
+            if (!nimbleBluetooth->isConnected()) {
+                BluetoothPowerControl::disableController();
+                powerMon->clearState(meshtastic_PowerMon_State_BT_On);
+            }
+            // else: aktive Verbindung -> kein disable, laeuft natuerlich aus
         }
 #endif
         // For ESP32 ohne BLUETOOTH_MAY_SLEEP: enable=false ist ein No-Op.
