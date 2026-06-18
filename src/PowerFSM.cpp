@@ -167,8 +167,13 @@ static void nbEnter()
     if (screen)
         screen->setOn(false);
 #ifdef ARCH_ESP32
+#ifndef BLUETOOTH_MAY_SLEEP
     // Only ESP32 should turn off bluetooth
+    // DL9SAU 2026-06-18 Phase 1: ausgeblendet wenn BLEPowerCycler aktiv;
+    // der Cycler entscheidet wann BT an/aus, PowerFSM-Calls wuerden
+    // Pingpong erzeugen.
     setBluetoothEnable(false);
+#endif
 #endif
 
     // FIXME - check if we already have packets for phone and immediately trigger EVENT_PACKETS_FOR_PHONE
@@ -177,7 +182,9 @@ static void nbEnter()
 static void darkEnter()
 {
     LOG_POWERFSM("State: darkEnter");
+#ifndef BLUETOOTH_MAY_SLEEP
     setBluetoothEnable(true);
+#endif
     if (screen)
         screen->setOn(false);
 }
@@ -185,7 +192,9 @@ static void darkEnter()
 static void serialEnter()
 {
     LOG_POWERFSM("State: serialEnter");
+#ifndef BLUETOOTH_MAY_SLEEP
     setBluetoothEnable(false);
+#endif
     if (screen) {
         screen->setOn(true);
     }
@@ -194,8 +203,10 @@ static void serialEnter()
 static void serialExit()
 {
     LOG_POWERFSM("State: serialExit");
+#ifndef BLUETOOTH_MAY_SLEEP
     // Turn bluetooth back on when we leave serial stream API
     setBluetoothEnable(true);
+#endif
 }
 
 static void powerEnter()
@@ -208,7 +219,9 @@ static void powerEnter()
     } else {
         if (screen)
             screen->setOn(true);
+#ifndef BLUETOOTH_MAY_SLEEP
         setBluetoothEnable(true);
+#endif
         // within enter() the function getState() returns the state we came from
     }
 }
@@ -226,7 +239,9 @@ static void powerIdle()
 static void powerExit()
 {
     LOG_POWERFSM("State: powerExit");
+#ifndef BLUETOOTH_MAY_SLEEP
     setBluetoothEnable(true);
+#endif
 }
 
 static void onEnter()
@@ -234,7 +249,9 @@ static void onEnter()
     LOG_POWERFSM("State: onEnter");
     if (screen)
         screen->setOn(true);
+#ifndef BLUETOOTH_MAY_SLEEP
     setBluetoothEnable(true);
+#endif
 }
 
 static void onIdle()

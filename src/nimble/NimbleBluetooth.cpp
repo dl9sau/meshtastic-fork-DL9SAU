@@ -752,6 +752,93 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
 static NimbleBluetoothToRadioCallback *toRadioCallbacks;
 static NimbleBluetoothFromRadioCallback *fromRadioCallbacks;
 
+// DL9SAU 2026-06-18 Phase 1 Strategy B: NimBLE-Host deinit fuer Cycler-
+// Sleep. Variante A (advertising-only) brachte bei MeshCore keine
+// messbare Strom-Ersparnis, daher Vollabbau:
+//   * Active Connection trennen (defensiv, sollte bei SLEEP-Eintritt
+//     ohnehin keine geben)
+//   * Unsere heap-allozierten Objekte (bluetoothPhoneAPI, to/from-Radio-
+//     Callbacks) freigeben -- NimBLEDevice::deinit() faesst sie nicht an
+//   * NimBLEDevice::deinit(true) -- raeumt Server/Services/Chars/
+//     ServerCallbacks weg (deleteOnRemove war beim setCallbacks gesetzt)
+//   * Alle file-scope Pointer auf nullptr -- Methoden checken das
+// Limitation: nur non-NIMBLE_TWO. NIMBLE_TWO hat anderen deinit-Pfad,
+// kann in Phase 2 nachgereicht werden.
+void NimbleBluetooth::powerSleep()
+{
+#if defined(ARCH_ESP32) && !defined(NIMBLE_TWO)
+    if (isDeInit)
+        return;
+    LOG_INFO("NimbleBluetooth: powerSleep (host deinit)");
+    isDeInit = true;
+
+    // 1. Advertising stoppen (defensiv)
+    NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
+    if (pAdvertising)
+        pAdvertising->stop();
+
+    // 2. Aktive Connection trennen (defensiv)
+    if (bleServer) {
+        uint16_t connHandle = nimbleBluetoothConnHandle.load();
+        if (connHandle != BLE_HS_CONN_HANDLE_NONE) {
+            bleServer->disconnect(connHandle);
+        }
+    }
+
+    // 3. Unsere Heap-Objekte freigeben (NimBLEDevice::deinit raeumt sie nicht)
+    delete bluetoothPhoneAPI;
+    bluetoothPhoneAPI = nullptr;
+    delete toRadioCallbacks;
+    toRadioCallbacks = nullptr;
+    delete fromRadioCallbacks;
+    fromRadioCallbacks = nullptr;
+
+    // 4. NimBLE-Host komplett zerlegen (true = release all memory)
+    NimBLEDevice::deinit(true);
+
+    // 5. Cached Pointer auf nullptr -- alle Objekte sind jetzt frei
+    bleServer = nullptr;
+    fromNumCharacteristic = nullptr;
+    BatteryCharacteristic = nullptr;
+    logRadioCharacteristic = nullptr;
+    nimbleBluetoothConnHandle = BLE_HS_CONN_HANDLE_NONE;
+
+    // 6. lastToRadio Buffer zuruecksetzen damit erstes Packet einer
+    //    neuen Connection nicht als Duplikat verworfen wird
+    memset(lastToRadio, 0, sizeof(lastToRadio));
+
+#ifdef BLUETOOTH_MAY_SLEEP
+    // 7. Controller-Hardware abschalten -- empirischer Befund 2026-06-18:
+    //    NimBLEDevice::deinit(true) raeumt den Host, laesst den Controller
+    //    aber ENABLED -> ~70 mA Verlust. Erst esp_bt_controller_disable
+    //    schaltet das Radio wirklich aus (Phase-0-Effekt).
+    BluetoothPowerControl::disableController();
+#endif
+#endif // ARCH_ESP32 && !NIMBLE_TWO
+}
+
+void NimbleBluetooth::powerWake()
+{
+#if defined(ARCH_ESP32) && !defined(NIMBLE_TWO)
+    if (!isDeInit)
+        return;
+    LOG_INFO("NimbleBluetooth: powerWake (re-setup)");
+    isDeInit = false;
+
+#ifdef BLUETOOTH_MAY_SLEEP
+    // Controller-Hardware wieder hoch BEVOR NimBLE init versucht zu
+    // kommunizieren. esp_bt_controller_enable wenn status==INITED;
+    // status==UNINITIALIZED (nach NimBLEDevice::deinit komplett ab)
+    // wird im setup()-Pfad durch NimBLEDevice::init() abgehandelt.
+    BluetoothPowerControl::enableController();
+#endif
+
+    // setup() ruft NimBLEDevice::init() + erzeugt Server/Services/
+    // Characteristics + Callbacks + startAdvertising komplett neu.
+    setup();
+#endif
+}
+
 void NimbleBluetooth::shutdown()
 {
     // No measurable power saving for ESP32 during light-sleep(?)
@@ -793,6 +880,9 @@ bool NimbleBluetooth::isConnected()
     // bleServer->getConnectedCount() ein Stack-Call ohne lebenden
     // Controller -- Lockup-Gefahr (siehe MeshCore Phase F).
     if (BluetoothPowerControl::isControllerDisabled())
+        return false;
+    // Phase 1 Strategy B: nach powerSleep() ist bleServer nullptr.
+    if (!bleServer)
         return false;
 #endif
     return bleServer->getConnectedCount() > 0;
@@ -842,6 +932,14 @@ void NimbleBluetooth::setup()
     // NimbleBluetooth::clearBonds();
 
     LOG_INFO("Init the NimBLE bluetooth module");
+
+    // DL9SAU 2026-06-18 Phase 1 Strategy B Hotfix: setup() ist sowohl
+    // first-time-init als auch wake-from-deinit. In beiden Faellen wird
+    // der NimBLE-Host komplett neu hochgefahren. Daher: isDeInit hier
+    // explizit auf false. Ohne diesen Reset bleibt nach Cycle 1 powerSleep
+    // das Flag true; Cycle 2 powerSleep returnt sofort -> Controller
+    // bleibt ENABLED -> Strom bleibt hoch.
+    isDeInit = false;
 
     NimBLEDevice::init(getDeviceName());
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);

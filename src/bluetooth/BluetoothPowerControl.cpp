@@ -36,7 +36,11 @@ void disableController()
     s_controllerDisabled = true;
 
 #ifdef ARCH_ESP32
-    // Status-Check verhindert Doppel-Disable.
+    // Status-Check verhindert Doppel-Disable. Empirisch (2026-06-18):
+    // wenn powerSleep zuvor NimBLEDevice::deinit(true) gerufen hat,
+    // ist Status hier bereits UNINITIALIZED -> dieser Call ist no-op.
+    // Phase 0 / explizite Off-Pfade fallen aber durch hier durch wenn
+    // Status ENABLED, und schalten den Controller dann tatsaechlich aus.
     if (esp_bt_controller_get_status() == ESP_BT_CONTROLLER_STATUS_ENABLED) {
         esp_bt_controller_disable();
     }

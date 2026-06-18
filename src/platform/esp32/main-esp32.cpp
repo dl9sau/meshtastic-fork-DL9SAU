@@ -7,6 +7,7 @@
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !MESHTASTIC_EXCLUDE_BLUETOOTH
 #include "nimble/NimbleBluetooth.h"
 #ifdef BLUETOOTH_MAY_SLEEP
+#include "bluetooth/BLEPowerCycler.h"
 #include "bluetooth/BluetoothPowerControl.h"
 #endif
 #endif
@@ -50,6 +51,14 @@ void setBluetoothEnable(bool enable)
         if (enable && !nimbleBluetooth->isActive()) {
             powerMon->setState(meshtastic_PowerMon_State_BT_On);
             nimbleBluetooth->setup();
+#ifdef BLUETOOTH_MAY_SLEEP
+            // DL9SAU 2026-06-18 Phase 1 Strategy B Hotfix: nach setup() ist
+            // der Controller via NimBLEDevice::init() wieder ENABLED. Wir
+            // muessen den Phase-0-Guard explizit raeumen, sonst returnen
+            // isConnected/getRssi/sendLog die ganze WAKE-Phase lang false
+            // und der Cycler sieht nie eine echte BLE-Connection.
+            BluetoothPowerControl::enableController();
+#endif
         }
 #ifdef BLUETOOTH_MAY_SLEEP
         // DL9SAU 2026-06-18 Phase 0: BLE-Power-Cycle. esp_bt_controller_
@@ -155,6 +164,13 @@ void esp32Setup()
     randomSeed(seed);
     */
 
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !MESHTASTIC_EXCLUDE_BLUETOOTH && defined(BLUETOOTH_MAY_SLEEP)
+    // DL9SAU 2026-06-18 Phase 1: BLE-Power-Cycler State-Machine init.
+    // Setzt initiale State = BOOT, startet 10 min Boot-Grace-Timer.
+    // tick() in esp32Loop() rollt die State-Machine danach weiter.
+    BLEPowerCycler::setup();
+#endif
+
 #ifdef ADC_V
     pinMode(ADC_V, INPUT);
 #endif
@@ -227,6 +243,13 @@ void esp32Setup()
 void esp32Loop()
 {
     esp_task_wdt_reset(); // service our app level watchdog
+
+#if !defined(CONFIG_IDF_TARGET_ESP32S2) && !MESHTASTIC_EXCLUDE_BLUETOOTH && defined(BLUETOOTH_MAY_SLEEP)
+    // DL9SAU 2026-06-18 Phase 1: BLE-Power-Cycler tickt.
+    // tick() ist intern rate-limited (TICK_INTERVAL_MS), darum hier
+    // jeden Loop-Aufruf bedenkenlos rufbar.
+    BLEPowerCycler::tick();
+#endif
 
     // for debug printing
     // radio.radioIf.canSleep();
