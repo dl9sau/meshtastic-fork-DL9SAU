@@ -6,6 +6,9 @@
 
 #if !defined(CONFIG_IDF_TARGET_ESP32S2) && !MESHTASTIC_EXCLUDE_BLUETOOTH
 #include "nimble/NimbleBluetooth.h"
+#ifdef BLUETOOTH_MAY_SLEEP
+#include "bluetooth/BluetoothPowerControl.h"
+#endif
 #endif
 
 #include <MeshtasticOTA.h>
@@ -48,7 +51,32 @@ void setBluetoothEnable(bool enable)
             powerMon->setState(meshtastic_PowerMon_State_BT_On);
             nimbleBluetooth->setup();
         }
-        // For ESP32, no way to recover from bluetooth shutdown without reboot
+#ifdef BLUETOOTH_MAY_SLEEP
+        // DL9SAU 2026-06-18 Phase 0: BLE-Power-Cycle. esp_bt_controller_
+        // disable/_enable schaltet das Radio echt aus, ohne die NimBLE-
+        // Host-Datenstrukturen (bleServer, Service, Characteristics) zu
+        // zerstoeren. Spar-Effekt 70+ mA gemessen in MeshCore Phase F.
+        // Cross-Ref: Wishlist-DL9SAU.md Eintrag 2026-06-18,
+        //   ~/MeshCore-git/src/helpers/esp32/SerialBLEInterface.cpp:220-279
+        else if (enable && nimbleBluetooth->isActive() && BluetoothPowerControl::isControllerDisabled()) {
+            // Wake from cycle-sleep: Controller hoch + Advertising neu.
+            // setup() ist schon gelaufen, alle NimBLE-Pointer sind valide.
+            if (BluetoothPowerControl::enableController()) {
+                powerMon->setState(meshtastic_PowerMon_State_BT_On);
+                nimbleBluetooth->startAdvertising();
+            }
+            // Bei enableController()==false bleibt Guard gesetzt -- alle
+            // NimbleBluetooth-Methoden returnen weiter safe ohne Stack-Call.
+        } else if (!enable && nimbleBluetooth->isActive() && !BluetoothPowerControl::isControllerDisabled()) {
+            // Cycle-sleep: Guard setzen + Controller aus. Guard wird
+            // INNERHALB disableController() zuerst gesetzt -- damit
+            // parallel laufende Loops (PowerFSM, BluetoothPhoneAPI
+            // runOnce) nicht in den abgeschalteten Stack rufen.
+            BluetoothPowerControl::disableController();
+            powerMon->clearState(meshtastic_PowerMon_State_BT_On);
+        }
+#endif
+        // For ESP32 ohne BLUETOOTH_MAY_SLEEP: enable=false ist ein No-Op.
         // BLE advertising automatically stops when MCU enters light-sleep(?)
         // For deep-sleep, shutdown hardware with nimbleBluetooth->deinit(). Requires reboot to reverse
     }

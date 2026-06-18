@@ -12,16 +12,14 @@ class NimbleBluetooth : BluetoothApi
     bool isConnected();
     int getRssi();
     void sendLog(const uint8_t *logMessage, size_t length);
-#if defined(NIMBLE_TWO)
+    // DL9SAU 2026-06-18 Phase 0: public auf beiden Pfaden, damit der
+    // BLUETOOTH_MAY_SLEEP-Wake-Code in setBluetoothEnable() Advertising
+    // nach esp_bt_controller_enable() neu starten kann.
     void startAdvertising();
-#endif
     bool isDeInit = false;
 
   private:
     void setupService();
-#if !defined(NIMBLE_TWO)
-    void startAdvertising();
-#endif
 };
 
 void setBluetoothEnable(bool enable);

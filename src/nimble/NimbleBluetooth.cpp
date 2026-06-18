@@ -4,6 +4,12 @@
 #include "NimbleBluetooth.h"
 #include "PowerFSM.h"
 #include "StaticPointerQueue.h"
+// DL9SAU 2026-06-18 Phase 0: Guard-Flag fuer BLE-Power-Cycle.
+// Wenn Controller per esp_bt_controller_disable abgeschaltet, sind
+// Stack-Calls auf bleServer/Characteristics unsicher.
+#ifdef BLUETOOTH_MAY_SLEEP
+#include "bluetooth/BluetoothPowerControl.h"
+#endif
 
 #include "concurrency/OSThread.h"
 #include "main.h"
@@ -782,11 +788,23 @@ bool NimbleBluetooth::isActive()
 
 bool NimbleBluetooth::isConnected()
 {
+#ifdef BLUETOOTH_MAY_SLEEP
+    // Phase 0 Guard: bei abgeschaltetem Controller ist
+    // bleServer->getConnectedCount() ein Stack-Call ohne lebenden
+    // Controller -- Lockup-Gefahr (siehe MeshCore Phase F).
+    if (BluetoothPowerControl::isControllerDisabled())
+        return false;
+#endif
     return bleServer->getConnectedCount() > 0;
 }
 
 int NimbleBluetooth::getRssi()
 {
+#ifdef BLUETOOTH_MAY_SLEEP
+    // Phase 0 Guard: ble_gap_conn_rssi() ruft in den Stack.
+    if (BluetoothPowerControl::isControllerDisabled())
+        return 0;
+#endif
 #if defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C6)
     if (!bleServer || !isConnected()) {
         return 0; // No active BLE connection
@@ -961,6 +979,11 @@ void NimbleBluetooth::startAdvertising()
 /// Given a level between 0-100, update the BLE attribute
 void updateBatteryLevel(uint8_t level)
 {
+#ifdef BLUETOOTH_MAY_SLEEP
+    // Phase 0 Guard: BatteryCharacteristic->notify() ist Stack-Call.
+    if (BluetoothPowerControl::isControllerDisabled())
+        return;
+#endif
     if ((config.bluetooth.enabled == true) && bleServer && nimbleBluetooth->isConnected()) {
         BatteryCharacteristic->setValue(&level, 1);
 #ifdef NIMBLE_TWO
@@ -979,6 +1002,13 @@ void NimbleBluetooth::clearBonds()
 
 void NimbleBluetooth::sendLog(const uint8_t *logMessage, size_t length)
 {
+#ifdef BLUETOOTH_MAY_SLEEP
+    // Phase 0 Guard: logRadioCharacteristic->notify() ist Stack-Call.
+    // isConnected() ist zwar selbst geguarded, aber expliziter Check
+    // hier spart eine Funktion und macht die Intention klarer.
+    if (BluetoothPowerControl::isControllerDisabled())
+        return;
+#endif
     if (!bleServer || !isConnected() || length > 512) {
         return;
     }
