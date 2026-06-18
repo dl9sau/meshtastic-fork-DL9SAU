@@ -324,3 +324,104 @@ Debounce 5 min via `flushIfDirty()` aus `MeshService::loop()`. Bei DM-flutiger S
 3. `MeshPacket`-Pool-Ownership: Bucket-Slots NIE an `packetPool.release()` zurueckgeben — Ownership-Check kritisch
 4. Magic-Header `"TB01"` bei Schema-Bruch fail-soft (Datei loeschen statt mis-decoden)
 5. ESP32 classic: bei Default-Slot-Zahlen RAM-Budget pruefen, ggf. halbieren
+
+---
+
+## 2026-06-18 — Portierung BLE-Power-Spar-Mechanismus aus MeshCore (TODO)
+
+**Status:** TODO. Wartet auf User-GO. Recherche + Plan steht, ESP32-Show-Stopper identifiziert, Implementierungs-Variante festgelegt.
+
+**Cross-Ref MeshCore-Tree:** `~/MeshCore-git/Wunschliste-DL9SAU.txt` Eintrag 85 (lange Recherche, Phasen-Plan, Pseudocode). Dort liegt der vollstaendige Hintergrund inkl. Phase-F-Lockup-Erfahrung mit `_ctrl_disabled`-Guard. **Diese Datei hier ist die Meshtastic-Sicht** mit fokussierten Findings aus dem Meshtastic-Tree.
+
+### Ziel
+
+`esp_bt_controller_disable/_enable` Cycler aus MeshCore (`src/helpers/esp32/SerialBLEInterface.cpp:220-279`) nach Meshtastic portieren — der wirklich-Strom-spart-Mechanismus (70+ mA Gewinn bei MeshCore Phase F), nicht nur Advertising-Off.
+
+### Aktivierung
+
+Per Build-Define **`BLUETOOTH_MAY_SLEEP`** (kein CLI, kein Setting). Meshtastic-Philosophie: Power-Strategien sind Hardware-Frage, nicht User-Entscheidung. Default AUS — wer das will, baut mit dem Flag.
+
+Greift nur wenn `config.bluetooth.enabled == true`. Wenn User BT via App/Display ausschaltet: Cycler geht in `PERMANENT_OFF`.
+
+### Show-Stopper-Befund (Phase 0 → muss zuerst!)
+
+`src/platform/esp32/main-esp32.cpp:32-54` — `setBluetoothEnable(bool)` hat **keinen disable-Zweig**. `setBluetoothEnable(false)` ist auf ESP32 ein **No-Op**. Kommentar im Code:
+
+> "For ESP32, no way to recover from bluetooth shutdown without reboot"
+
+Heisst: bevor irgendein Cycler angesetzt werden kann, muss erst ein funktionierender enable↔disable↔enable Zyklus geschaffen werden. NRF52 hat das schon (`main-nrf52.cpp:190-229` — shutdown funktional).
+
+### Entscheidung: Variante B (direkter Controller-Toggle)
+
+Zwei Varianten standen zur Wahl:
+
+**A) NimBLE deinit/reinit** — `NimBLEDevice::deinit(true)` + spaeter `setup()`. Beruehrt `NimbleBluetooth`-Klassen-Interna: `bleServer`, `bleService`, mehrere `NimBLECharacteristic*` Pointer + `BluetoothStatus` Observer-Subscribers (PhoneAPI). Alle Pointer werden ungueltig, alle Subscriber muessten Reset-fest sein. ~10 dynamische Objekte berueht.
+
+**B) `esp_bt_controller_disable/_enable` direkt** — wie MeshCore. NimBLE-Datenstrukturen bleiben intakt, nur Controller-Hardware aus. Bei Re-Enable: Device-Name + Advertising neu starten via `reapplyControllerState()`-Analog. **1 Funktion betroffen, nicht 10 Pointer.**
+
+→ **Entscheidung: Variante B.** Bug-Surface-Vergleich ist gigantisch. Plus: ihr habt mit Variante B bei MeshCore schon den Phase-F-Lockup durchgekaempft, das Wissen ist da. Variante A waere echte Refactor-Arbeit ohne klaren Gewinn.
+
+### Drei Gruende warum MeshCore das einfacher hatte (fuer das Verstaendnis spaeter)
+
+1. **MeshCore hat einen klaren On/Off-Anker** — `SerialBLEInterface::enable()`/`disable()` sind symmetrisch ausgebaut (SerialBLEInterface.cpp:220-279). Meshtastic hat `setBluetoothEnable` aber nur half-implementiert (siehe Phase 0).
+
+2. **MeshCore hat leichtgewichtigen BLE-Wrapper** — eine flache Klasse, ein paar Pointer, klares Restart-Pattern. Meshtastic hat `NimbleBluetooth` mit fetter Objekt-Hierarchie (Server + Service + N Characteristics + Observer-Subscribers in PhoneAPI). Deshalb Variante A so teuer.
+
+3. **MeshCore hat keinen Mit-Eigentuemer der BT-Lebenszeit** — `manageBlePower()` allein entscheidet. Meshtastic hat **PowerFSM** mit eigenem Anspruch: `src/PowerFSM.cpp:85+` ruft `nbEnter()`/`darkEnter()` selber `setBluetoothEnable(...)`. Ohne Guard → Pingpong: Cycler sagt SLEEP→off, PowerFSM sagt darkEnter→on, repeat. **Im `BLUETOOTH_MAY_SLEEP`-Build muessen PowerFSM-BT-Calls `#ifndef`-gegated werden** (Hoheits-Uebergabe an Cycler).
+
+4. **Bonus: Phase-F-Lockup-Erfahrung schon eingebaut** — euer `_ctrl_disabled` Guard-Flag (SerialBLEInterface.cpp:261-266) verhindert dass parallel laufende Loops in den abgeschalteten Stack rufen. Diese Schmerz-Erfahrung steckt im Meshtastic-Code nicht — wuerde dort als erstes wieder gemacht.
+
+### Integration-Points im Meshtastic-Tree (Recherche-Ergebnis)
+
+| Punkt | Datei:Zeile | Was |
+|---|---|---|
+| `setBluetoothEnable(bool)` ESP32 | `src/platform/esp32/main-esp32.cpp:32-54` | enable-only, disable-Zweig **fehlt** (Phase 0!) |
+| `setBluetoothEnable(bool)` NRF52 | `src/platform/nrf52/main-nrf52.cpp:190-229` | enable + funktionaler disable, beide Pfade da |
+| ESP32 Loop-Hook | `src/platform/esp32/main-esp32.cpp:187` | `esp32Loop()` — Cycler-Tick hier rein |
+| NRF52 Loop-Hook | `src/platform/nrf52/main-nrf52.cpp:331` | `nrf52Loop()` |
+| Connect-Callback ESP32 | `src/nimble/NimbleBluetooth.cpp:658-737` | onConnect/onDisconnect — `lastConnectAt`/`lastDisconnectAt` einklinken |
+| Connect-Callback NRF52 | `src/platform/nrf52/NRF52Bluetooth.cpp:60-100` | dito mit BluetoothStatus Observer |
+| Connection-Status ESP32 | `NimbleBluetooth.cpp:785` | `bleServer->getConnectedCount() > 0` |
+| Connection-Status NRF52 | `NRF52Bluetooth.cpp:52` | `Bluefruit.connected(connectionHandle)` |
+| **PowerFSM-Kollision** | `src/PowerFSM.cpp:85+` | `nbEnter()`/`darkEnter()` rufen `setBluetoothEnable` — **MUSS gegated werden** |
+| User-Toggle persistent | `config.bluetooth.enabled` Protobuf | kein `onSettingsChanged`-Hook → polling (1-2s im Cycler-Tick) |
+| ROUTER-Downcast Admin | `src/modules/AdminModule.cpp:869-874` | nicht relevant fuer Cycler, aber: ROUTER-Rolle → `PERMANENT_OFF` (analog MeshCore) |
+
+### Hardcoded Konstanten (analog MeshCore-Defaults)
+
+```c
+static const uint32_t BOOT_GRACE_MS     = 10UL * 60 * 1000;  // 10 min — App muss erstmal pairen
+static const uint32_t HOT_START_MS      =  5UL * 60 * 1000;  // 5 min — nach Disconnect noch bereit
+static const uint32_t WAKE_MS           = 20UL * 1000;       // 20s on
+static const uint32_t SLEEP_RECENCY_MS  = 20UL * 1000;       // 20s off bei recency
+static const uint32_t SLEEP_DEFAULT_MS  = 40UL * 1000;       // 40s off default
+static const uint32_t RECENCY_WINDOW_MS = 10UL * 60 * 1000;  // 10 min Recency-Fenster
+```
+
+### State-Machine (analog MeshCore `MyMesh::manageBlePower`)
+
+`BOOT → AWAKE → HOT_START → WAKE ↔ SLEEP / PERMANENT_OFF`
+
+- `BOOT`: erste 10 min nach Power-On — BT bleibt an (User soll erstmal pairen koennen)
+- `AWAKE`: BLE-Verbindung aktiv — sticky on, kein Cycle
+- `HOT_START`: gerade disconnected — 5 min on (User koennte gleich wieder kommen)
+- `WAKE`/`SLEEP`: Cycle 20s on / 40s off (bzw. 20s wenn recent activity)
+- `PERMANENT_OFF`: User hat BT aus via App/Display, oder Rolle = ROUTER
+
+### Phasen-Plan (NEU, mit Phase 0)
+
+| Phase | Aufwand | Inhalt |
+|---|---|---|
+| **0 (KRITISCH)** | 3-5h | ESP32 BLE enable↔disable↔enable funktionsfaehig machen, isoliert. `setBluetoothEnable(false)`-Zweig schreiben, `esp_bt_controller_disable/_enable` einbauen, `_ctrl_disabled` Guard portieren. Smoke-Test: 10× Toggle ohne Crash. **Bevor irgendwas anderes passiert.** |
+| 1 | 4-6h | `src/bluetooth/BLEPowerCycler.{cpp,h}` mit State-Machine, hardcoded Konstanten, ESP32 + NRF52 parallel. PowerFSM-Guards via `#ifdef BLUETOOTH_MAY_SLEEP`. Polling `config.bluetooth.enabled`. |
+| 2 | 2-3h | Test Heltec WT V1.1: Strommessung 5-10 min disconnect (Baseline 95 mA vs. mit Cycler). Lockup-Test: BT mehrfach via Display togglen waehrend Cycler laeuft. |
+
+**Gesamt: 9-14h.**
+
+### Quellen
+
+- `~/MeshCore-git/Wunschliste-DL9SAU.txt` Eintrag 85 (vollstaendige Recherche + Pseudocode)
+- `~/MeshCore-git/src/helpers/esp32/SerialBLEInterface.cpp:220-279` (Referenz-Implementierung)
+- `~/MeshCore-git/src/helpers/esp32/SerialBLEInterface.h:17,24,65` (`_ctrl_disabled` Guard-Dokumentation)
+- Phase-F-Lockup-Erkenntnis: Wunschliste-MeshCore Z 4667-4697
+- Diese Datei: Meshtastic-Tree-Recherche 2026-06-18 (Sub-Agent Explore)
