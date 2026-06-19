@@ -425,3 +425,32 @@ static const uint32_t RECENCY_WINDOW_MS = 10UL * 60 * 1000;  // 10 min Recency-F
 - `~/MeshCore-git/src/helpers/esp32/SerialBLEInterface.h:17,24,65` (`_ctrl_disabled` Guard-Dokumentation)
 - Phase-F-Lockup-Erkenntnis: Wunschliste-MeshCore Z 4667-4697
 - Diese Datei: Meshtastic-Tree-Recherche 2026-06-18 (Sub-Agent Explore)
+
+### Update 2026-06-19: NRF52-Portierung NICHT umgesetzt
+
+**Status: deprioritisiert / nicht implementiert.** Empirische Cross-Messung
+am 2026-06-19 hat gezeigt, dass auf NRF52-Plattformen kein nennenswerter
+Spar-Effekt zu erwarten ist:
+
+| Plattform | GPS-Δ (on vs off) | BLE-Effekt (on vs off) |
+|---|---|---|
+| Heltec WT V1.1 (ESP32-S3), Meshtastic | -12 mA (UBLOX PSM aktiv) | **-80 mA mit Phase-1-Cycler** |
+| Heltec WT V1.1 (ESP32-S3), MeshCore  | +28 mA | signifikant |
+| T1000-E (NRF52840), MeshCore         | +3-5 mA | **nicht messbar** |
+
+NRF52840 hat dedizierte BLE-Hardware mit μA-Klasse Idle-Verbrauch.
+Der BLE-Stack lebt im Funk-Hardware-Block und braucht keine CPU-
+Beteiligung im idle. ESP32-S3 nutzt einen Software-BLE-Stack (NimBLE)
+auf der CPU, dadurch hohe Idle-Kosten -- genau der Hebel den unser
+Cycler adressiert.
+
+Konsequenz: der ganze 80-mA-Hebel ist **ESP32-spezifisch**. Eine
+NRF52-Portierung des Cyclers wuerde bestenfalls 1-2 mA bringen bei
+ungleich hoher Code-Komplexitaet (Bluefruit-API statt NimBLE).
+Aufwand-Nutzen-Verhaeltnis negativ.
+
+Was bleibt fuer NRF52-Power-Optimierung: GPS-Power-Management auf
+Boards mit Airoha-Chip (AG3335 im T1000-E) -- der Chip hat interne
+Periodic-Sleep-Modi, die Meshtastic-aktuell nicht anspricht (im
+Gegensatz zu UBLOX wo PSM/PMS/ECO sauber konfiguriert sind, siehe
+`src/gps/GPS.cpp:660-770`). Eigener Wishlist-Eintrag waehrt.
