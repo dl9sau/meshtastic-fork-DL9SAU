@@ -941,28 +941,6 @@ void NimbleBluetooth::powerSleep()
 #endif // ARCH_ESP32 && !NIMBLE_TWO
 }
 
-void NimbleBluetooth::powerWake()
-{
-#if defined(ARCH_ESP32) && !defined(NIMBLE_TWO)
-    if (!isDeInit)
-        return;
-    LOG_INFO("NimbleBluetooth: powerWake (re-setup)");
-    isDeInit = false;
-
-#ifdef BLUETOOTH_MAY_SLEEP
-    // Controller-Hardware wieder hoch BEVOR NimBLE init versucht zu
-    // kommunizieren. esp_bt_controller_enable wenn status==INITED;
-    // status==UNINITIALIZED (nach NimBLEDevice::deinit komplett ab)
-    // wird im setup()-Pfad durch NimBLEDevice::init() abgehandelt.
-    BluetoothPowerControl::enableController();
-#endif
-
-    // setup() ruft NimBLEDevice::init() + erzeugt Server/Services/
-    // Characteristics + Callbacks + startAdvertising komplett neu.
-    setup();
-#endif
-}
-
 void NimbleBluetooth::shutdown()
 {
     // No measurable power saving for ESP32 during light-sleep(?)
