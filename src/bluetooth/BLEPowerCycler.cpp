@@ -207,7 +207,13 @@ void tick()
         if (isConnected()) {
             transition(S_AWAKE);
         } else if (now >= s_bootGraceUntil) {
-            transition(S_HOT_START);
+            // DL9SAU 2026-06-19 align with MeshCore: nach BOOT_GRACE direkt
+            // in den 40:20-Cycle (kein HOT_START Umweg). HOT_START hat nur
+            // Sinn nach echtem Disconnect -- nach Boot ohne je verbunden
+            // gewesen zu sein gibt es keinen Recency-Grund fuer 5 min on.
+            // s_lastDisconnectAt bleibt 0 -> transition(S_SLEEP) waehlt
+            // SLEEP_DEFAULT_MS=40s (kein Recency-Bonus). Match.
+            transition(S_SLEEP);
         }
         break;
 
@@ -271,6 +277,31 @@ const char *currentStateName()
         return "PERMANENT_OFF";
     }
     return "?";
+}
+
+void wakeForUserAttention(const char *reason)
+{
+    // PERMANENT_OFF respektieren: User hat BT explizit aus (config) oder
+    // Rolle ist Infrastructure (Router/Repeater) -- nicht uebergehen.
+    if (s_state == S_PERMANENT_OFF)
+        return;
+
+    // BOOT/AWAKE: BT ist sowieso permanent on. Nichts zu tun.
+    // (HOT_START-Timer-Vorbereitung erst bei Bedarf -- AWAKE setzt ihn
+    // beim naechsten echten Disconnect frisch.)
+    if (s_state == S_BOOT || s_state == S_AWAKE)
+        return;
+
+    // HOT_START / WAKE / SLEEP: BT an + 5-min-Timer reset. Bei SLEEP
+    // bedeutet das einen sofortigen ensureOn() im naechsten tick().
+    LOG_INFO("BLEPowerCycler: wakeForUserAttention(%s) -- HOT_START reset", reason ? reason : "");
+    s_hotStartUntil = millis() + HOT_START_MS;
+    if (s_state != S_HOT_START) {
+        transition(S_HOT_START);
+        // transition() ueberschreibt s_hotStartUntil mit now+HOT_START_MS,
+        // also Doppel-Set ist harmlos.
+    }
+    // Naechster tick() ruft ensureOn() automatisch.
 }
 
 } // namespace BLEPowerCycler

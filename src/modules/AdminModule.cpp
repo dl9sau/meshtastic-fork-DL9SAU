@@ -18,6 +18,9 @@
 #ifdef ARCH_NRF52
 #include "main.h"
 #endif
+#ifdef BLUETOOTH_MAY_SLEEP
+#include "bluetooth/BLEPowerCycler.h"
+#endif
 #ifdef ARCH_PORTDUINO
 #include "unistd.h"
 #endif
@@ -79,6 +82,17 @@ bool AdminModule::handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshta
     if (mp.which_payload_variant != meshtastic_MeshPacket_decoded_tag) {
         return handled;
     }
+#ifdef BLUETOOTH_MAY_SLEEP
+    // DL9SAU 2026-06-19: bei einem eingehenden Admin-Packet von einer
+    // fremden Node ist die Wahrscheinlichkeit hoch dass der gleiche
+    // User gleich lokal via App connecten will (statt weiterhin remote
+    // ueber Admin-Channel zu fahren). Cycler in HOT_START (5 min on)
+    // damit BT-Reconnect sofort moeglich ist. Responses + lokale
+    // Aufrufe ignorieren -- die sind keine User-Aufmerksamkeit-Signale.
+    if (fromOthers && !messageIsResponse(r)) {
+        BLEPowerCycler::wakeForUserAttention("admin");
+    }
+#endif
     meshtastic_Channel *ch = &channels.getByIndex(mp.channel);
     // Could tighten this up further by tracking the last public_key we went an AdminMessage request to
     // and only allowing responses from that remote.

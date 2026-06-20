@@ -454,3 +454,61 @@ Boards mit Airoha-Chip (AG3335 im T1000-E) -- der Chip hat interne
 Periodic-Sleep-Modi, die Meshtastic-aktuell nicht anspricht (im
 Gegensatz zu UBLOX wo PSM/PMS/ECO sauber konfiguriert sind, siehe
 `src/gps/GPS.cpp:660-770`). Eigener Wishlist-Eintrag waehrt.
+
+### Update 2026-06-19: Phase-1 Refinements (BOOT-Grace align, Wake-on-Events)
+
+Zwei Verbesserungen analog MeshCore-Verhalten committed:
+
+1. **BOOT-Grace -> direkt SLEEP** (statt Umweg HOT_START). Nach 10 min
+   BOOT-Grace ohne je verbunden gewesen zu sein gibt es keinen
+   Recency-Grund fuer 5 min extra sticky-on. Spart 5 min BT-on im
+   Edge-Case "Geraet bootet, User pairt nie". Match mit MeshCore-Spec.
+
+2. **Wake-on-Events**: Public API `BLEPowerCycler::wakeForUserAttention(reason)`,
+   eingehakt in:
+   - `src/modules/TextMessageModule.cpp` neben dem existierenden
+     `shouldWakeOnReceivedMessage()`-PowerFSM-Trigger -- gleicher Gate
+     (CLIENT-Familie, kein Low-Battery, keine ext. Notification).
+   - `src/modules/AdminModule.cpp` `handleReceivedProtobuf()` -- triggert
+     bei eingehendem Admin-Packet von einer fremden Node (nicht uns
+     selbst, nicht Response).
+   Beide Events setzen den Cycler auf HOT_START mit 5 min sticky-on,
+   damit der User die App oeffnen + connecten kann ohne auf den
+   naechsten 20s WAKE-Slot warten zu muessen.
+
+### Known Issue 2026-06-19: Reconnect nach SLEEP scheitert auf NimBLE
+
+**Status: offen, Workaround fehlt.**
+
+Symptom: nach erfolgreichem ersten Pairing in BOOT-Grace oder AWAKE,
+nach dem ersten SLEEP-Cycle ist Phone-Reconnect kaputt -- Advertising
+funktioniert (Phone sieht Device mit korrektem Namen), Connection
+formt sich auf LL-Layer, wird aber **instant disconnected** (sichtbar
+als wiederholte `BLE disconnect` Log-Zeilen, **kein** `BLE authentication
+complete`).
+
+Reproduziert sowohl mit Phase-0-only (esp_bt_controller_disable allein)
+als auch mit Strategy B (NimBLE-Host-deinit + setup()-Reinit), sowohl
+mit `deinit(true)` als auch `deinit(false)`. Auch mit Bluetooth-Mode
+NoPin nicht getestet ob's bonded-only ist -- War: MeshCore auf gleicher
+Hardware (Heltec WT V1.1) macht das gleiche Sleep ueber Bluedroid
+problemlos. Vermutung: NimBLE-Arduino Re-Init-Pfad rekonstruiert
+Security/Bond-State (LTK, IRK) nicht korrekt -- aber auch ohne Bonding
+(NoPin) noch nicht verifiziert.
+
+Aktueller Status der Phase-1-Implementation:
+- Strom-Ersparnis funktioniert (~85 mA Δ pro SLEEP-Cycle verifiziert)
+- Cycler State-Machine + Wake-on-Events code-vollstaendig
+- Aber: **Phone-Reconnect nach SLEEP scheitert** -- nur Reboot bringt BT
+  zuverlaessig zurueck
+- BLUETOOTH_MAY_SLEEP Flag bleibt opt-in via skip-worktree auf platformio.ini
+
+Naechste Schritte (frisch im naechsten Session-Slot):
+- Diagnose-Logging fuer NimBLE GAP-Events (ble_gap_event_string helper)
+  + Security-State-Dump nach setup() -- sehen WAS genau scheitert
+- NoPin-Mode sauber testen (fresh pair in NoPin, dann SLEEP+Reconnect) --
+  isoliert Bond-State von strukturellem Re-Init-Problem
+- Eventuell `nimble_port_stop()/run()` statt `deinit/init` -- Lower-Level
+  NimBLE-API erhaelt mehr State
+- Vergleich mit anderen NimBLE-Projekten die deinit+reinit erfolgreich
+  machen (gibt's da Beispiele?)

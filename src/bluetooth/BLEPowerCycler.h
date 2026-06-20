@@ -52,6 +52,21 @@ void tick();
 // String -- nicht freigeben.
 const char *currentStateName();
 
+// Event-getriebener Wake-Trigger fuer Situationen wo der User
+// wahrscheinlich gleich seine App oeffnet (eingehende Text-Message,
+// eingehender Admin-Befehl). Setzt State auf HOT_START mit frischem
+// 5-min-Timer -- gibt dem User ein 5-Minuten-Fenster zum App-Connect
+// ohne auf den naechsten 20s WAKE-Cycle warten zu muessen.
+//
+// Idempotent. Hat KEINE Wirkung in States wo BT eh schon an ist
+// (BOOT, AWAKE) -- dort wird nur der HOT_START-Timer fuer einen
+// spaeteren Disconnect vorbereitet, BT bleibt sowieso an.
+// Hat KEINE Wirkung in PERMANENT_OFF -- respektiert User-explizites
+// BT-Off via config.bluetooth.enabled bzw. Headless-Role.
+//
+// reason: kurzer Klartext fuer LOG_INFO ("rx text", "admin cmd", ...).
+void wakeForUserAttention(const char *reason);
+
 } // namespace BLEPowerCycler
 
 #endif // BLUETOOTH_MAY_SLEEP

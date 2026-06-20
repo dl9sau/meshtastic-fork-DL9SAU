@@ -9,6 +9,9 @@
 #include "graphics/SharedUIDisplay.h"
 #include "graphics/draw/MessageRenderer.h"
 #include "main.h"
+#ifdef BLUETOOTH_MAY_SLEEP
+#include "bluetooth/BLEPowerCycler.h"
+#endif
 TextMessageModule *textMessageModule;
 
 ProcessMessage TextMessageModule::handleReceived(const meshtastic_MeshPacket &mp)
@@ -38,6 +41,14 @@ ProcessMessage TextMessageModule::handleReceived(const meshtastic_MeshPacket &mp
     // Only trigger screen wake if configuration allows it
     if (shouldWakeOnReceivedMessage()) {
         powerFSM.trigger(EVENT_RECEIVED_MSG);
+#ifdef BLUETOOTH_MAY_SLEEP
+        // DL9SAU 2026-06-19: gleicher Gate wie Screen-Wake -- wenn der
+        // User Screen-Wake will, will er sicher auch BT-Wake um die
+        // Nachricht in der App zu lesen. Setzt Cycler auf HOT_START
+        // (5 min sticky on) statt User auf naechsten 20s-WAKE-Slot
+        // warten zu lassen.
+        BLEPowerCycler::wakeForUserAttention("rx text");
+#endif
     }
 
     // Notify any observers (e.g. external modules that care about packets)
