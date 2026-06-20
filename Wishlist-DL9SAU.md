@@ -512,3 +512,36 @@ Naechste Schritte (frisch im naechsten Session-Slot):
   NimBLE-API erhaelt mehr State
 - Vergleich mit anderen NimBLE-Projekten die deinit+reinit erfolgreich
   machen (gibt's da Beispiele?)
+
+Loesungs-Pfade in groesserer Reihenfolge von Eingriffstiefe:
+
+**A) Meshtastic-side Workaround mit Lower-Level NimBLE-API**
+   Statt `NimBLEDevice::deinit/init` direkt `nimble_port_stop()`
+   + `esp_bt_controller_disable()` auf sleep, umgekehrt auf wake.
+   Host-Datenstrukturen (incl. Security/Bond-State) bleiben unangetastet,
+   nur Controller + Task werden gestoppt. Kein lib-patch noetig.
+   Risiko: lower-level API koennte andere subtile Erwartungen haben
+   die NimBLE-Arduino's Wrapper sonst handlet.
+
+**B) NimBLE-Arduino patchen + skip-worktree-Pattern auf libdeps**
+   `.pio/libdeps/*/NimBLE-Arduino/src/...` lokal anfassen + git-Patch
+   verwalten. Nachteil: PIO regeneriert die Lib bei jedem Update,
+   manueller Patch geht verloren (siehe MeshCore-Adafruit-Heap-Erfahrung
+   gestern). Workaround: patch-files in `lib_archive_filter`-Hook
+   oder eigenes Fork via lib_deps URL pinnen.
+
+**C) Upstream-Beitrag an h2zero/NimBLE-Arduino**
+   Issue/PR mit unserem Use-Case ("BLE cycle sleep -- deinit then
+   reinit should restore bond/security state"). NimBLE-Arduino's API
+   assumes init-once-per-boot; eine sauber definierte Re-Init-API mit
+   garantiertem State-Reload waere die richtige Loesung fuer alle
+   NimBLE-Arduino-User. Lange Spielzeit, aber sauber.
+
+**D) Strategy B mit Bond-Save/Restore selber implementieren**
+   Vor `deinit(true)` Bond-DB explizit aus NimBLE rausziehen (via
+   `ble_store_iterate` oder NVS direkt lesen), nach `init()` wieder
+   reinschreiben. Krasse Bastelei, hohes Bug-Surface.
+
+Empfehlung fuer naechsten Session-Slot: **erst (Diagnose-Logging via
+GAP-Events) um genau zu sehen WAS scheitert, dann gezielt A versuchen
+(am wenigsten invasiv).** B und C bleiben Fallback / Long-Term.
