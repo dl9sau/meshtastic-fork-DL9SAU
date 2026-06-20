@@ -545,3 +545,45 @@ Loesungs-Pfade in groesserer Reihenfolge von Eingriffstiefe:
 Empfehlung fuer naechsten Session-Slot: **erst (Diagnose-Logging via
 GAP-Events) um genau zu sehen WAS scheitert, dann gezielt A versuchen
 (am wenigsten invasiv).** B und C bleiben Fallback / Long-Term.
+
+### Update 2026-06-19 spaeter: Q&D Trennung Phase-0 vs Phase-1
+
+User-Erkenntnis: Phase-0 alleine (echte Controller-Disable bei User-
+explicit-BT-Off, sticky off bis Reboot) liefert **schon den gesamten
+Strom-Spar-Vorteil** (~70-85 mA), **OHNE Reconnect-Bug** weil kein
+Auto-Cycle stattfindet.
+
+Anwendungsfall: Tracker im Auto / zu Hause waehrend man einkaufen ist.
+User toggelt BT explicit aus -> Tracker spart Strom + LoRa-Mesh laeuft
+weiter (Nachrichten kommen an). User kommt zurueck, toggelt BT ein ->
+Display-Pfad triggert ohnehin Reboot (existierendes Meshtastic-
+Verhalten) -> BT kommt sauber hoch.
+
+Aktueller Stand: `BLUETOOTH_MAY_SLEEP` aktiviert Phase-0 UND Phase-1
+zusammen. Phase-1's Auto-Cycle bringt den Reconnect-Bug.
+
+Vorschlag: in zwei Build-Flags splitten:
+  * `BLUETOOTH_MAY_SLEEP` (oder umbenannt `BLE_USER_DISABLE_SAVES_POWER`)
+    -- nur Phase-0-Mechanismus. Default opt-in candidate weil
+    bug-frei + harter Power-Win, kein UX-Regressionsrisiko.
+  * `BLE_AUTO_POWER_CYCLE` (separater opt-in) -- Phase-1 Cycler.
+    Bleibt experimentell bis Reconnect-Bug-Fix (Pfad A/B/C/D oben).
+
+Implementations-Aufwand: ~10-15 LoC. Cycler-tick + setup() in main-esp32.cpp
+und PowerFSM-Guards an zweiten ifdef binden. Wishlist-Action fuer
+naechste Session.
+
+### Tuning-Idee fuer spaeter: HOT_START_MS bumpen
+
+`BLEPowerCycler::HOT_START_MS` aktuell 5 min (hardgecoded analog MeshCore).
+Falls Feld-Beobachtung zeigt dass User oft erst nach 5-8 min reconnecten
+(Phone war im Standby, Auto, Pause), erhoehen auf 10 min:
+  `static const uint32_t HOT_START_MS = 10UL * 60 * 1000;`
+
+Zwei Vorteile:
+1. Reconnect-Komfort: groesseres sticky-on-Fenster nach Disconnect
+2. Weniger Q&D-Reboots: der Reconnect-Bug-Workaround triggert nur
+   AUSSERHALB HOT_START -- laengere HOT_START reduziert Reboot-Frequenz
+
+Reine Konstante-Anpassung, kein Strukturumbau. Trigger: zuerst Felder-
+fahrungen sammeln nach mehreren Wochen praktischer Nutzung.

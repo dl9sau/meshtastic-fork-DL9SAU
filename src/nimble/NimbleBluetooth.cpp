@@ -120,6 +120,21 @@ static std::atomic<uint16_t> nimbleBluetoothConnHandle{BLE_HS_CONN_HANDLE_NONE};
 // callback while the host is mid-reset crashes (LoadProhibited), so the main task does it instead.
 static std::atomic<bool> pendingStartAdvertising{false};
 
+#ifdef BLUETOOTH_MAY_SLEEP
+// DL9SAU 2026-06-19 Q&D Reconnect-Bug-Workaround. Siehe NimbleBluetooth.h
+// fuer Beschreibung. Heuristik: nach erstem SLEEP-Cycle disconnects-ohne-
+// auth-complete = broken reconnect -> Reboot triggern (deferred zu
+// BLEPowerCycler::tick im main-task; nicht direkt aus NimBLE-task).
+//
+// Permanently-connected oder reconnect-im-HOT_START Pfad bleibt unangetastet:
+// dort wird Authentication-Complete sauber durchlaufen, kein Reboot.
+static std::atomic<bool> s_didSleepSinceBoot{false};
+static std::atomic<bool> s_hadAuthCompleteSinceLastSleep{false};
+static std::atomic<bool> s_pendingRebootForReconnectFix{false};
+
+bool blePendingRebootForReconnectFix() { return s_pendingRebootForReconnectFix.load(); }
+#endif
+
 static void clearPairingDisplay()
 {
     if (!passkeyShowing) {
@@ -733,6 +748,13 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
 
         LOG_INFO("BLE authentication complete");
 
+#ifdef BLUETOOTH_MAY_SLEEP
+        // DL9SAU 2026-06-19 Q&D Reconnect-Fix: erfolgreiche Auth merken,
+        // damit onDisconnect zwischen "normal" (auth-complete fire) und
+        // "broken reconnect" (auth-complete NIE feuerte) unterscheiden kann.
+        s_hadAuthCompleteSinceLastSleep = true;
+#endif
+
         meshtastic::BluetoothStatus newStatus(meshtastic::BluetoothStatus::ConnectionState::CONNECTED);
         bluetoothStatus->updateStatus(&newStatus);
         clearPairingDisplay();
@@ -788,6 +810,21 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
 #else
         if (nimbleBluetooth && nimbleBluetooth->isDeInit)
             return;
+#endif
+
+#ifdef BLUETOOTH_MAY_SLEEP
+        // DL9SAU 2026-06-19 Q&D Reconnect-Fix: wenn wir mindestens einen
+        // SLEEP-Cycle hatten UND der disconnect kommt OHNE dass
+        // Authentication-Complete vorher feuerte, ist das exakt das
+        // broken-reconnect-Pattern (Phone connectet, Encryption-Handshake
+        // scheitert, instant disconnect). ESP-Reboot triggern; nach
+        // BOOT_GRACE klappt der Reconnect gegen frischen NimBLE-State.
+        // Reboot wird im main-task durch BLEPowerCycler::tick() ausgeloest
+        // (sicherer als ESP.restart() aus NimBLE-task heraus).
+        if (s_didSleepSinceBoot.load() && !s_hadAuthCompleteSinceLastSleep.load()) {
+            LOG_WARN("BLE Q&D reconnect-fix: disconnect w/o auth after SLEEP cycle -> pending reboot");
+            s_pendingRebootForReconnectFix = true;
+        }
 #endif
 
         meshtastic::BluetoothStatus newStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED);
@@ -850,6 +887,14 @@ void NimbleBluetooth::powerSleep()
         return;
     LOG_INFO("NimbleBluetooth: powerSleep (host deinit)");
     isDeInit = true;
+
+#ifdef BLUETOOTH_MAY_SLEEP
+    // Q&D Reconnect-Fix Tracking: ab jetzt war ein SLEEP-Cycle aktiv.
+    // Reset des Auth-Complete-Flags -- naechster Connect muss auth-
+    // complete neu beweisen damit er als "echt funktioniert" zaehlt.
+    s_didSleepSinceBoot = true;
+    s_hadAuthCompleteSinceLastSleep = false;
+#endif
 
     // 1. Advertising stoppen (defensiv)
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();

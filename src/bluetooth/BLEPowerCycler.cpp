@@ -178,6 +178,18 @@ void tick()
         return;
     s_lastTick = now;
 
+    // DL9SAU 2026-06-19 Q&D Reconnect-Fix: NimbleBluetooth::onDisconnect
+    // setzt das Flag wenn ein broken-reconnect erkannt wurde (= disconnect
+    // ohne dass Auth-Complete jemals nach dem letzten SLEEP feuerte).
+    // Reboot triggern wir hier im main-task statt mid-NimBLE-callback.
+#if !MESHTASTIC_EXCLUDE_BLUETOOTH
+    if (blePendingRebootForReconnectFix()) {
+        LOG_WARN("BLEPowerCycler: pending reboot (NimBLE reconnect-fix Q&D), restarting in 200ms");
+        delay(200); // let log flush
+        ESP.restart();
+    }
+#endif
+
     // Universelle Gates: koennen jederzeit den State auf PERMANENT_OFF
     // ziehen.
     bool userWantsBt = (config.bluetooth.enabled == true);
