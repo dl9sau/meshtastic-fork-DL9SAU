@@ -935,18 +935,31 @@ void NimbleBluetooth::shutdown()
 #endif
 }
 
-// Proper shutdown for ESP32. Needs reboot to reverse.
+// Shutdown for ESP32 menu toggle. Safe to reverse with setup().
 void NimbleBluetooth::deinit()
 {
-#ifdef ARCH_ESP32
-    LOG_INFO("Disable bluetooth until reboot");
+#if defined(ARCH_ESP32) && !defined(NIMBLE_TWO)
+    LOG_INFO("Disable bluetooth (menu toggle)");
     isDeInit = true;
+
+    // Full teardown: stop host, deinit controller, delete server hierarchy
+    NimBLEDevice::deinit(true);
+    // After deinit(true): bleServer and all services/characteristics freed.
+    // Our heap objects (phoneAPI, callbacks) are NOT owned by NimBLE.
+
+    delete bluetoothPhoneAPI;
+    bluetoothPhoneAPI = nullptr;
+    delete toRadioCallbacks;
+    toRadioCallbacks = nullptr;
+    delete fromRadioCallbacks;
+    fromRadioCallbacks = nullptr;
+
+    bleServer = nullptr;
+    nimbleBluetoothConnHandle = BLE_HS_CONN_HANDLE_NONE;
+    memset(lastToRadio, 0, sizeof(lastToRadio));
 
 #ifdef BLE_LED
     digitalWrite(BLE_LED, LED_STATE_OFF);
-#endif
-#ifndef NIMBLE_TWO
-    NimBLEDevice::deinit();
 #endif
 #endif
 }
@@ -1035,19 +1048,16 @@ void NimbleBluetooth::setup()
 
     ble_gap_event_listener_register(&s_disconnectListener, disconnect_reason_listener, NULL);
 
-#ifdef BLUETOOTH_MAY_SLEEP
-    if (s_didSleepSinceBoot) {
+#ifdef ARCH_ESP32
+    {
         int peerCnt = 0, ourCnt = 0;
         ble_store_util_count(BLE_STORE_OBJ_TYPE_PEER_SEC, &peerCnt);
         ble_store_util_count(BLE_STORE_OBJ_TYPE_OUR_SEC, &ourCnt);
-        LOG_INFO("BLE reinit: peer_sec=%d our_sec=%d", peerCnt, ourCnt);
+        LOG_INFO("BLE init: peer_sec=%d our_sec=%d", peerCnt, ourCnt);
 
-        // ble_hs_misc_restore_irks() re-adds peer IRKs to the controller's
-        // resolving list during host sync, but the controller starts with
-        // address resolution DISABLED after a full deinit+reinit.
-        // We must explicitly re-enable it here, or the controller won't
-        // resolve the phone's RPA, leading to LTK lookup failure and
-        // disconnect reason 531 (BLE_ERR_PIN_OR_KEY_MISSING).
+        // The controller starts with LE Address Resolution DISABLED after
+        // any deinit+reinit (e.g. powerSleep or menu toggle). Re-enable it
+        // so bonded phones using RPAs can reconnect.
         delay(50);
         {
             uint8_t enable = 1;
@@ -1055,9 +1065,11 @@ void NimbleBluetooth::setup()
             if (rc != 0) {
                 LOG_WARN("BLE set_addr_res_en failed rc=%d", rc);
             } else {
-                LOG_INFO("BLE address resolution re-enabled after reinit");
+                LOG_INFO("BLE address resolution re-enabled");
             }
         }
+        // ble_hs_misc_restore_irks() during host sync may race with controller
+        // readiness. Retry after the delay to ensure IRKs reach the hardware.
         int rc = ble_hs_misc_restore_irks();
         if (rc != 0) {
             LOG_WARN("BLE restore_irks retry failed rc=%d", rc);
