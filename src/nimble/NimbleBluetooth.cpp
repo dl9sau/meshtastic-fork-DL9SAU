@@ -9,6 +9,7 @@
 // Stack-Calls auf bleServer/Characteristics unsicher.
 #ifdef BLUETOOTH_MAY_SLEEP
 #include "bluetooth/BluetoothPowerControl.h"
+
 #endif
 
 #include "concurrency/OSThread.h"
@@ -17,6 +18,23 @@
 #include "mesh/mesh-pb-constants.h"
 #include "sleep.h"
 #include <NimBLEDevice.h>
+
+// DL9SAU 2026-06-21 Reinit-Fix: ble_hs_sync() ruft restore_irks zu frueh,
+// bevor der ESP32-S3-Controller bereit ist. Wir rufen es nach init() nochmal.
+// Deklaration aus nimble/host/src/ble_hs_priv.h (keine public API).
+extern "C" int ble_hs_misc_restore_irks(void);
+extern "C" int ble_hs_hci_cmd_tx(uint16_t opcode, const void *cmd, uint8_t cmd_len,
+                                 void *rsp, uint8_t rsp_len);
+
+// Captures BLE_GAP_EVENT_DISCONNECT reason via listener (replaces library patch).
+static int nimble_last_disconnect_reason = -1;
+static struct ble_gap_event_listener s_disconnectListener;
+static int disconnect_reason_listener(struct ble_gap_event *event, void *arg)
+{
+    if (event->type == BLE_GAP_EVENT_DISCONNECT)
+        nimble_last_disconnect_reason = event->disconnect.reason;
+    return 0;
+}
 #include <atomic>
 #include <mutex>
 
@@ -121,18 +139,8 @@ static std::atomic<uint16_t> nimbleBluetoothConnHandle{BLE_HS_CONN_HANDLE_NONE};
 static std::atomic<bool> pendingStartAdvertising{false};
 
 #ifdef BLUETOOTH_MAY_SLEEP
-// DL9SAU 2026-06-19 Q&D Reconnect-Bug-Workaround. Siehe NimbleBluetooth.h
-// fuer Beschreibung. Heuristik: nach erstem SLEEP-Cycle disconnects-ohne-
-// auth-complete = broken reconnect -> Reboot triggern (deferred zu
-// BLEPowerCycler::tick im main-task; nicht direkt aus NimBLE-task).
-//
-// Permanently-connected oder reconnect-im-HOT_START Pfad bleibt unangetastet:
-// dort wird Authentication-Complete sauber durchlaufen, kein Reboot.
+// Set in powerSleep(), checked in setup() to detect first init after deinit.
 static std::atomic<bool> s_didSleepSinceBoot{false};
-static std::atomic<bool> s_hadAuthCompleteSinceLastSleep{false};
-static std::atomic<bool> s_pendingRebootForReconnectFix{false};
-
-bool blePendingRebootForReconnectFix() { return s_pendingRebootForReconnectFix.load(); }
 #endif
 
 static void clearPairingDisplay()
@@ -748,13 +756,6 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
 
         LOG_INFO("BLE authentication complete");
 
-#ifdef BLUETOOTH_MAY_SLEEP
-        // DL9SAU 2026-06-19 Q&D Reconnect-Fix: erfolgreiche Auth merken,
-        // damit onDisconnect zwischen "normal" (auth-complete fire) und
-        // "broken reconnect" (auth-complete NIE feuerte) unterscheiden kann.
-        s_hadAuthCompleteSinceLastSleep = true;
-#endif
-
         meshtastic::BluetoothStatus newStatus(meshtastic::BluetoothStatus::ConnectionState::CONNECTED);
         bluetoothStatus->updateStatus(&newStatus);
         clearPairingDisplay();
@@ -802,7 +803,7 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
 #else
     virtual void onDisconnect(NimBLEServer *pServer, ble_gap_conn_desc *desc)
     {
-        LOG_INFO("BLE disconnect");
+        LOG_INFO("BLE disconnect reason=%d", nimble_last_disconnect_reason);
 #endif
 #ifdef NIMBLE_TWO
         if (ble->isDeInit)
@@ -810,21 +811,6 @@ class NimbleBluetoothServerCallback : public NimBLEServerCallbacks
 #else
         if (nimbleBluetooth && nimbleBluetooth->isDeInit)
             return;
-#endif
-
-#ifdef BLUETOOTH_MAY_SLEEP
-        // DL9SAU 2026-06-19 Q&D Reconnect-Fix: wenn wir mindestens einen
-        // SLEEP-Cycle hatten UND der disconnect kommt OHNE dass
-        // Authentication-Complete vorher feuerte, ist das exakt das
-        // broken-reconnect-Pattern (Phone connectet, Encryption-Handshake
-        // scheitert, instant disconnect). ESP-Reboot triggern; nach
-        // BOOT_GRACE klappt der Reconnect gegen frischen NimBLE-State.
-        // Reboot wird im main-task durch BLEPowerCycler::tick() ausgeloest
-        // (sicherer als ESP.restart() aus NimBLE-task heraus).
-        if (s_didSleepSinceBoot.load() && !s_hadAuthCompleteSinceLastSleep.load()) {
-            LOG_WARN("BLE Q&D reconnect-fix: disconnect w/o auth after SLEEP cycle -> pending reboot");
-            s_pendingRebootForReconnectFix = true;
-        }
 #endif
 
         meshtastic::BluetoothStatus newStatus(meshtastic::BluetoothStatus::ConnectionState::DISCONNECTED);
@@ -889,11 +875,7 @@ void NimbleBluetooth::powerSleep()
     isDeInit = true;
 
 #ifdef BLUETOOTH_MAY_SLEEP
-    // Q&D Reconnect-Fix Tracking: ab jetzt war ein SLEEP-Cycle aktiv.
-    // Reset des Auth-Complete-Flags -- naechster Connect muss auth-
-    // complete neu beweisen damit er als "echt funktioniert" zaehlt.
     s_didSleepSinceBoot = true;
-    s_hadAuthCompleteSinceLastSleep = false;
 #endif
 
     // 1. Advertising stoppen (defensiv)
@@ -1047,7 +1029,41 @@ void NimbleBluetooth::setup()
     // bleibt ENABLED -> Strom bleibt hoch.
     isDeInit = false;
 
+    nimble_last_disconnect_reason = -1; // reset sentinel before init
+
     NimBLEDevice::init(getDeviceName());
+
+    ble_gap_event_listener_register(&s_disconnectListener, disconnect_reason_listener, NULL);
+
+#ifdef BLUETOOTH_MAY_SLEEP
+    if (s_didSleepSinceBoot) {
+        int peerCnt = 0, ourCnt = 0;
+        ble_store_util_count(BLE_STORE_OBJ_TYPE_PEER_SEC, &peerCnt);
+        ble_store_util_count(BLE_STORE_OBJ_TYPE_OUR_SEC, &ourCnt);
+        LOG_INFO("BLE reinit: peer_sec=%d our_sec=%d", peerCnt, ourCnt);
+
+        // ble_hs_misc_restore_irks() re-adds peer IRKs to the controller's
+        // resolving list during host sync, but the controller starts with
+        // address resolution DISABLED after a full deinit+reinit.
+        // We must explicitly re-enable it here, or the controller won't
+        // resolve the phone's RPA, leading to LTK lookup failure and
+        // disconnect reason 531 (BLE_ERR_PIN_OR_KEY_MISSING).
+        delay(50);
+        {
+            uint8_t enable = 1;
+            int rc = ble_hs_hci_cmd_tx(0x202D, &enable, 1, NULL, 0);
+            if (rc != 0) {
+                LOG_WARN("BLE set_addr_res_en failed rc=%d", rc);
+            } else {
+                LOG_INFO("BLE address resolution re-enabled after reinit");
+            }
+        }
+        int rc = ble_hs_misc_restore_irks();
+        if (rc != 0) {
+            LOG_WARN("BLE restore_irks retry failed rc=%d", rc);
+        }
+    }
+#endif
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
 #if NIMBLE_ENABLE_2M_PHY && (defined(CONFIG_IDF_TARGET_ESP32S3) || defined(CONFIG_IDF_TARGET_ESP32C6))

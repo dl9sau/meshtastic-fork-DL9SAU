@@ -33,18 +33,5 @@ class NimbleBluetooth : BluetoothApi
     void setupService();
 };
 
-#ifdef BLUETOOTH_MAY_SLEEP
-// DL9SAU 2026-06-19 Q&D Reconnect-Bug-Workaround. Phase-1-Cycler's
-// deinit/reinit bricht NimBLE-Reconnect fuer bonded Peers (siehe
-// Wishlist-DL9SAU.md Known-Issue + Loesungs-Pfade A/B/C/D).
-// Heuristik: wenn nach erstem SLEEP-Cycle ein Disconnect kommt OHNE
-// dass vorher Authentication-Complete feuerte (= broken-reconnect-Pattern),
-// triggern wir einen ESP-Reboot. Phone reconnectet dann in BOOT_GRACE
-// gegen frischen NimBLE-State -> klappt.
-// Public Query: BLEPowerCycler::tick() (main-task) prueft das Flag
-// und reagiert mit ESP.restart() statt mid-onDisconnect-callback.
-bool blePendingRebootForReconnectFix();
-#endif
-
 void setBluetoothEnable(bool enable);
 void clearNVS();

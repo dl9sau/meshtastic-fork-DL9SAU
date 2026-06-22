@@ -77,28 +77,18 @@ void setBluetoothEnable(bool enable)
             // Bei enableController()==false bleibt Guard gesetzt -- alle
             // NimbleBluetooth-Methoden returnen weiter safe ohne Stack-Call.
         } else if (!enable && nimbleBluetooth->isActive() && !BluetoothPowerControl::isControllerDisabled()) {
-            // Cycle-sleep: Guard setzen + Controller aus.
-            //
-            // 2026-06-18 Phase 0 Hotfix: Skip-when-connected. esp_bt_
-            // controller_disable mitten in aktiver Verbindung hinterlaesst
-            // den Controller-Stack inkonsistent -- bei direkt folgendem
-            // light-sleep (sleep.cpp:206 ruft setBluetoothEnable(false)
-            // VOR light_sleep_start) gibt's Reboot. Beobachtet auf
-            // Heltec WT V1.1 mit Router-Rolle: t=11s connected, t=13s
-            // PowerFSM -> sleep -> reboot.
-            // Defensiv: wenn aktive Verbindung -> kein disable. Verbindung
-            // laeuft natuerlich aus, naechster setBluetoothEnable(false)
-            // greift dann.
+            // Cycle-sleep: Controller aus.
             if (!nimbleBluetooth->isConnected()) {
                 BluetoothPowerControl::disableController();
                 powerMon->clearState(meshtastic_PowerMon_State_BT_On);
             }
-            // else: aktive Verbindung -> kein disable, laeuft natuerlich aus
         }
 #endif
         // For ESP32 ohne BLUETOOTH_MAY_SLEEP: enable=false ist ein No-Op.
         // BLE advertising automatically stops when MCU enters light-sleep(?)
         // For deep-sleep, shutdown hardware with nimbleBluetooth->deinit(). Requires reboot to reverse
+        // fixed, 2026-06-22 DL9SAU: deinit+reinit nach Schlaf funktioniert jetzt (LE Set Address
+        // Resolution Enable in setup() nach init()). BLE-Toggle ueber Display-Menue ohne Reboot.
     }
 }
 #else

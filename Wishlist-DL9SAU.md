@@ -351,6 +351,8 @@ Greift nur wenn `config.bluetooth.enabled == true`. Wenn User BT via App/Display
 
 Heisst: bevor irgendein Cycler angesetzt werden kann, muss erst ein funktionierender enable↔disable↔enable Zyklus geschaffen werden. NRF52 hat das schon (`main-nrf52.cpp:190-229` — shutdown funktional).
 
+**Erledigt, 2026-06-22 DL9SAU:** Der enable↔disable↔enable Zyklus funktioniert jetzt. Ursache war ein fehlendes `HCI LE Set Address Resolution Enable` nach `NimBLEDevice::deinit()+init()` — der ESP32-S3 Controller startet nach deinit die Address-Resolution nicht automatisch, daher konnte er RPAs (Resolvable Private Addresses) bonded Peers nicht aufloesen, der LTK-Lookup schlug fehl, und der Phone-Reconnect endete mit `BLE_ERR_PIN_OR_KEY_MISSING` (disconnect reason 531). Fix in `NimbleBluetooth::setup()`: nach `init()` wird `ble_hs_hci_cmd_tx(0x202D, enable=1, ...)` gesendet, gefolgt von einem zweiten `ble_hs_misc_restore_irks()`. BLE-Toggle ueber Display-Menue kommt jetzt ohne Reboot aus (`SystemCommandsModule.cpp`).
+
 ### Entscheidung: Variante B (direkter Controller-Toggle)
 
 Zwei Varianten standen zur Wahl:
@@ -476,11 +478,41 @@ Zwei Verbesserungen analog MeshCore-Verhalten committed:
    damit der User die App oeffnen + connecten kann ohne auf den
    naechsten 20s WAKE-Slot warten zu muessen.
 
-### Known Issue 2026-06-19: Reconnect nach SLEEP scheitert auf NimBLE
+### Known Issue 2026-06-19 → Closed 2026-06-22: Reconnect nach SLEEP scheitert auf NimBLE
 
-**Status: offen, Workaround fehlt.**
+**Status: closed.** Fehler gefunden und gefixt. Siehe Fix-Block in
+`src/nimble/NimbleBluetooth.cpp:NimbleBluetooth::setup()` (nach dem dritten
+`NimBLEDevice::init()` im 2026-06-22 Commit).
 
-Symptom: nach erfolgreichem ersten Pairing in BOOT-Grace oder AWAKE,
+**Ursache (zwei unabhängige Bugs, beide nötig):**
+
+1. **Controller Address Resolution defaultet auf OFF nach deinit.**
+   `NimBLEDevice::deinit(true)` resettet den Bluetooth-Controller. Bei Re-Init
+   programmiert der Host die IRKs der gebondeten Peers in die Resolving-List,
+   aber der Controller startet mit **LE Address Resolution = disabled**
+   (HCI-Opcode `0x202D` default 0). Das bonded Phone kommt mit einer RPA
+   (Resolvable Private Address) herein → Controller kann RPA nicht auflösen →
+   LTK-Lookup schlägt fehl → `BLE_ERR_PIN_OR_KEY_MISSING` (disconnect
+   reason 531) → Link bricht instant. **Fix:** `ble_hs_hci_cmd_tx(0x202D,
+   enable=1, ...)` nach `init()`.
+
+2. **`ble_hs_misc_restore_irks()` raced mit Controller-Readyness.**
+   `ble_hs_sync()` ruft `restore_irks` auf, bevor der Controller vollständig
+   initialisiert ist → HCI-Commands zum Programmieren der Resolving-List
+   werden still verworfen. **Fix:** Zweiter Aufruf von
+   `ble_hs_misc_restore_irks()` nach `delay(50)`.
+
+**Android vs iOS:** iOS toleriert den fehlschlagenden Reconnect und behält
+den Bond. Android dagegen interpretiert den instant disconnect (reason 531)
+als "Peer hat meinen Bond verloren" und **löscht stillschweigend das Pairing**
+aus der eigenen DB → beim nächsten Versuch erscheint das Device als neues,
+unbekanntes Gerät mit Pairing-Dialog.
+
+**Nebeneffekt des Fixes:** Der Originalkommentar "For ESP32, no way to recover
+from bluetooth shutdown without reboot" ist nicht mehr zutreffend. BLE-Toggle
+über Display-Menü und Power-Cycle kommen jetzt ohne `ESP.restart()` aus.
+
+Symptom (historisch): nach erfolgreichem ersten Pairing in BOOT-Grace oder AWAKE,
 nach dem ersten SLEEP-Cycle ist Phone-Reconnect kaputt -- Advertising
 funktioniert (Phone sieht Device mit korrektem Namen), Connection
 formt sich auf LL-Layer, wird aber **instant disconnected** (sichtbar
@@ -495,47 +527,6 @@ Hardware (Heltec WT V1.1) macht das gleiche Sleep ueber Bluedroid
 problemlos. Vermutung: NimBLE-Arduino Re-Init-Pfad rekonstruiert
 Security/Bond-State (LTK, IRK) nicht korrekt -- aber auch ohne Bonding
 (NoPin) noch nicht verifiziert.
-
-Aktueller Status der Phase-1-Implementation:
-- Strom-Ersparnis funktioniert (~85 mA Δ pro SLEEP-Cycle verifiziert)
-- Cycler State-Machine + Wake-on-Events code-vollstaendig
-- Aber: **Phone-Reconnect nach SLEEP scheitert** -- nur Reboot bringt BT
-  zuverlaessig zurueck
-- BLUETOOTH_MAY_SLEEP Flag bleibt opt-in via skip-worktree auf platformio.ini
-
-Naechste Schritte (frisch im naechsten Session-Slot):
-- Diagnose-Logging fuer NimBLE GAP-Events (ble_gap_event_string helper)
-  + Security-State-Dump nach setup() -- sehen WAS genau scheitert
-- NoPin-Mode sauber testen (fresh pair in NoPin, dann SLEEP+Reconnect) --
-  isoliert Bond-State von strukturellem Re-Init-Problem
-- Eventuell `nimble_port_stop()/run()` statt `deinit/init` -- Lower-Level
-  NimBLE-API erhaelt mehr State
-- Vergleich mit anderen NimBLE-Projekten die deinit+reinit erfolgreich
-  machen (gibt's da Beispiele?)
-
-Loesungs-Pfade in groesserer Reihenfolge von Eingriffstiefe:
-
-**A) Meshtastic-side Workaround mit Lower-Level NimBLE-API**
-   Statt `NimBLEDevice::deinit/init` direkt `nimble_port_stop()`
-   + `esp_bt_controller_disable()` auf sleep, umgekehrt auf wake.
-   Host-Datenstrukturen (incl. Security/Bond-State) bleiben unangetastet,
-   nur Controller + Task werden gestoppt. Kein lib-patch noetig.
-   Risiko: lower-level API koennte andere subtile Erwartungen haben
-   die NimBLE-Arduino's Wrapper sonst handlet.
-
-**B) NimBLE-Arduino patchen + skip-worktree-Pattern auf libdeps**
-   `.pio/libdeps/*/NimBLE-Arduino/src/...` lokal anfassen + git-Patch
-   verwalten. Nachteil: PIO regeneriert die Lib bei jedem Update,
-   manueller Patch geht verloren (siehe MeshCore-Adafruit-Heap-Erfahrung
-   gestern). Workaround: patch-files in `lib_archive_filter`-Hook
-   oder eigenes Fork via lib_deps URL pinnen.
-
-**C) Upstream-Beitrag an h2zero/NimBLE-Arduino**
-   Issue/PR mit unserem Use-Case ("BLE cycle sleep -- deinit then
-   reinit should restore bond/security state"). NimBLE-Arduino's API
-   assumes init-once-per-boot; eine sauber definierte Re-Init-API mit
-   garantiertem State-Reload waere die richtige Loesung fuer alle
-   NimBLE-Arduino-User. Lange Spielzeit, aber sauber.
 
 **D) Strategy B mit Bond-Save/Restore selber implementieren**
    Vor `deinit(true)` Bond-DB explizit aus NimBLE rausziehen (via
