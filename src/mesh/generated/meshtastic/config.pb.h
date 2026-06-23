@@ -633,6 +633,8 @@ typedef struct _meshtastic_Config_BluetoothConfig {
     meshtastic_Config_BluetoothConfig_PairingMode mode;
     /* Specified PIN for PairingMode.FixedPin */
     uint32_t fixed_pin;
+    /* Enable BLE power-cycling (sleep/wake) on supported platforms */
+    bool power_cycle;
 } meshtastic_Config_BluetoothConfig;
 
 typedef PB_BYTES_ARRAY_T(32) meshtastic_Config_SecurityConfig_public_key_t;
@@ -786,7 +788,7 @@ extern "C" {
 #define meshtastic_Config_NetworkConfig_IpV4Config_init_default {0, 0, 0, 0}
 #define meshtastic_Config_DisplayConfig_init_default {0, _meshtastic_Config_DisplayConfig_DeprecatedGpsCoordinateFormat_MIN, 0, 0, 0, _meshtastic_Config_DisplayConfig_DisplayUnits_MIN, _meshtastic_Config_DisplayConfig_OledType_MIN, _meshtastic_Config_DisplayConfig_DisplayMode_MIN, 0, 0, _meshtastic_Config_DisplayConfig_CompassOrientation_MIN, 0, 0, 0}
 #define meshtastic_Config_LoRaConfig_init_default {0, _meshtastic_Config_LoRaConfig_ModemPreset_MIN, 0, 0, 0, 0, _meshtastic_Config_LoRaConfig_RegionCode_MIN, 0, 0, 0, 0, 0, 0, 0, 0, 0, {0, 0, 0}, 0, 0, _meshtastic_Config_LoRaConfig_FEM_LNA_Mode_MIN, 0}
-#define meshtastic_Config_BluetoothConfig_init_default {0, _meshtastic_Config_BluetoothConfig_PairingMode_MIN, 0}
+#define meshtastic_Config_BluetoothConfig_init_default {0, _meshtastic_Config_BluetoothConfig_PairingMode_MIN, 0, 0}
 #define meshtastic_Config_SecurityConfig_init_default {{0, {0}}, {0, {0}}, 0, {{0, {0}}, {0, {0}}, {0, {0}}}, 0, 0, 0, 0}
 #define meshtastic_Config_SessionkeyConfig_init_default {0}
 #define meshtastic_Config_init_zero              {0, {meshtastic_Config_DeviceConfig_init_zero}}
@@ -797,7 +799,7 @@ extern "C" {
 #define meshtastic_Config_NetworkConfig_IpV4Config_init_zero {0, 0, 0, 0}
 #define meshtastic_Config_DisplayConfig_init_zero {0, _meshtastic_Config_DisplayConfig_DeprecatedGpsCoordinateFormat_MIN, 0, 0, 0, _meshtastic_Config_DisplayConfig_DisplayUnits_MIN, _meshtastic_Config_DisplayConfig_OledType_MIN, _meshtastic_Config_DisplayConfig_DisplayMode_MIN, 0, 0, _meshtastic_Config_DisplayConfig_CompassOrientation_MIN, 0, 0, 0}
 #define meshtastic_Config_LoRaConfig_init_zero   {0, _meshtastic_Config_LoRaConfig_ModemPreset_MIN, 0, 0, 0, 0, _meshtastic_Config_LoRaConfig_RegionCode_MIN, 0, 0, 0, 0, 0, 0, 0, 0, 0, {0, 0, 0}, 0, 0, _meshtastic_Config_LoRaConfig_FEM_LNA_Mode_MIN, 0}
-#define meshtastic_Config_BluetoothConfig_init_zero {0, _meshtastic_Config_BluetoothConfig_PairingMode_MIN, 0}
+#define meshtastic_Config_BluetoothConfig_init_zero {0, _meshtastic_Config_BluetoothConfig_PairingMode_MIN, 0, 0}
 #define meshtastic_Config_SecurityConfig_init_zero {{0, {0}}, {0, {0}}, 0, {{0, {0}}, {0, {0}}, {0, {0}}}, 0, 0, 0, 0}
 #define meshtastic_Config_SessionkeyConfig_init_zero {0}
 
@@ -887,6 +889,7 @@ extern "C" {
 #define meshtastic_Config_BluetoothConfig_enabled_tag 1
 #define meshtastic_Config_BluetoothConfig_mode_tag 2
 #define meshtastic_Config_BluetoothConfig_fixed_pin_tag 3
+#define meshtastic_Config_BluetoothConfig_power_cycle_tag 4
 #define meshtastic_Config_SecurityConfig_public_key_tag 1
 #define meshtastic_Config_SecurityConfig_private_key_tag 2
 #define meshtastic_Config_SecurityConfig_admin_key_tag 3
@@ -1044,7 +1047,8 @@ X(a, STATIC,   SINGULAR, BOOL,     serial_hal_only, 107)
 #define meshtastic_Config_BluetoothConfig_FIELDLIST(X, a) \
 X(a, STATIC,   SINGULAR, BOOL,     enabled,           1) \
 X(a, STATIC,   SINGULAR, UENUM,    mode,              2) \
-X(a, STATIC,   SINGULAR, UINT32,   fixed_pin,         3)
+X(a, STATIC,   SINGULAR, UINT32,   fixed_pin,         3) \
+X(a, STATIC,   SINGULAR, BOOL,     power_cycle,       4)
 #define meshtastic_Config_BluetoothConfig_CALLBACK NULL
 #define meshtastic_Config_BluetoothConfig_DEFAULT NULL
 
@@ -1091,7 +1095,7 @@ extern const pb_msgdesc_t meshtastic_Config_SessionkeyConfig_msg;
 
 /* Maximum encoded size of messages (where known) */
 #define MESHTASTIC_MESHTASTIC_CONFIG_PB_H_MAX_SIZE meshtastic_Config_size
-#define meshtastic_Config_BluetoothConfig_size   10
+#define meshtastic_Config_BluetoothConfig_size   11
 #define meshtastic_Config_DeviceConfig_size      100
 #define meshtastic_Config_DisplayConfig_size     36
 #define meshtastic_Config_LoRaConfig_size        91

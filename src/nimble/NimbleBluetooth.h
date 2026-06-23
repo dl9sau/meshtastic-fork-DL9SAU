@@ -29,6 +29,12 @@ class NimbleBluetooth : BluetoothApi
     void powerSleep();
     bool isDeInit = false;
 
+    // DL9SAU 2026-06-22: Runtime toggle between Cycle (power-save) and
+    // Enabled (always-on) modes. Used by BLEPowerCycler to decide whether
+    // to enter SLEEP states. Default true on platforms with BLUETOOTH_MAY_SLEEP.
+    void setBluetoothCycleMode(bool enable);
+    bool getBluetoothCycleMode();
+
   private:
     void setupService();
 };

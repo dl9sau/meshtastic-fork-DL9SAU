@@ -579,6 +579,9 @@ void NodeDB::installDefaultConfig(bool preserveKey = false)
     config.has_power = true;
     config.has_network = true;
     config.has_bluetooth = (HAS_BLUETOOTH ? true : false);
+#ifdef BLUETOOTH_MAY_SLEEP
+    config.bluetooth.power_cycle = true; // Cycle mode on supported platforms
+#endif
     config.has_security = true;
     config.device.rebroadcast_mode = meshtastic_Config_DeviceConfig_RebroadcastMode_ALL;
 

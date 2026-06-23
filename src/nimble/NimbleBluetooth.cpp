@@ -157,6 +157,16 @@ static void clearPairingDisplay()
 #endif
 }
 
+void NimbleBluetooth::setBluetoothCycleMode(bool enable)
+{
+    config.bluetooth.power_cycle = enable;
+}
+
+bool NimbleBluetooth::getBluetoothCycleMode()
+{
+    return config.bluetooth.power_cycle;
+}
+
 class BluetoothPhoneAPI : public PhoneAPI, public concurrency::OSThread
 {
     /*

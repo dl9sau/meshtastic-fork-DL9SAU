@@ -110,6 +110,15 @@ static void ensureOff()
     }
 }
 
+static bool isCycleMode()
+{
+#if !MESHTASTIC_EXCLUDE_BLUETOOTH
+    if (nimbleBluetooth)
+        return nimbleBluetooth->getBluetoothCycleMode();
+#endif
+    return false;
+}
+
 static void transition(State next)
 {
     s_state = next;
@@ -206,7 +215,7 @@ void tick()
         ensureOn();
         if (isConnected()) {
             transition(S_AWAKE);
-        } else if (now >= s_bootGraceUntil) {
+        } else if (now >= s_bootGraceUntil && isCycleMode()) {
             // DL9SAU 2026-06-19 align with MeshCore: nach BOOT_GRACE direkt
             // in den 40:20-Cycle (kein HOT_START Umweg). HOT_START hat nur
             // Sinn nach echtem Disconnect -- nach Boot ohne je verbunden
@@ -233,7 +242,7 @@ void tick()
         ensureOn();
         if (isConnected()) {
             transition(S_AWAKE);
-        } else if (now >= s_hotStartUntil) {
+        } else if (now >= s_hotStartUntil && isCycleMode()) {
             transition(S_SLEEP);
         }
         break;
@@ -242,12 +251,17 @@ void tick()
         ensureOn();
         if (isConnected()) {
             transition(S_AWAKE);
-        } else if (now >= s_wakeUntil) {
+        } else if (now >= s_wakeUntil && isCycleMode()) {
             transition(S_SLEEP);
         }
         break;
 
     case S_SLEEP:
+        if (!isCycleMode()) {
+            // Mode switched to Enabled while cycling — wake up immediately
+            transition(S_WAKE);
+            break;
+        }
         ensureOff();
         if (now >= s_sleepUntil) {
             transition(S_WAKE);

@@ -1931,23 +1931,71 @@ void menuHandler::GPSPositionBroadcastMenu()
 
 void menuHandler::bluetoothToggleMenu()
 {
+    // Number of non-Back options
+    int nOptions = 2; // Enabled, Disabled
+#ifdef BLUETOOTH_MAY_SLEEP
+    static const char *optionsArray[] = {"Back", "Enabled", "Disabled", "Cycle"};
+    nOptions = 3;
+#else
     static const char *optionsArray[] = {"Back", "Enabled", "Disabled"};
+#endif
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "Toggle Bluetooth";
     if (currentResolution == ScreenResolution::UltraLow) {
         bannerOptions.message = "Bluetooth";
     }
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 3;
+    bannerOptions.optionsCount = nOptions + 1; // +1 for Back
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == 0)
             return;
-        else if (selected != (config.bluetooth.enabled ? 1 : 2)) {
-            InputEvent event = {.inputEvent = (input_broker_event)170, .kbchar = 170, .touchX = 0, .touchY = 0};
-            inputBroker->injectInputEvent(&event);
+#ifdef BLUETOOTH_MAY_SLEEP
+        if (selected == 3) {
+            // Cycle mode
+            config.bluetooth.enabled = true;
+            if (nimbleBluetooth)
+                nimbleBluetooth->setBluetoothCycleMode(true);
+        } else
+#endif
+            if (selected == 1) {
+            // Enabled
+            config.bluetooth.enabled = true;
+#ifdef BLUETOOTH_MAY_SLEEP
+            if (nimbleBluetooth)
+                nimbleBluetooth->setBluetoothCycleMode(false);
+#endif
+        } else {
+            // Disabled
+            config.bluetooth.enabled = false;
         }
+#if defined(ARDUINO_ARCH_NRF52)
+        if (!config.bluetooth.enabled) {
+            disableBluetooth();
+            IF_SCREEN(screen->showSimpleBanner("Bluetooth OFF", 3000));
+        } else {
+            IF_SCREEN(screen->showSimpleBanner("Bluetooth ON", 3000));
+            if (nrf52Bluetooth)
+                nrf52Bluetooth->resumeAdvertising();
+        }
+#else
+        if (!config.bluetooth.enabled) {
+            disableBluetooth();
+            IF_SCREEN(screen->showSimpleBanner("Bluetooth OFF", 3000));
+        } else {
+            IF_SCREEN(screen->showSimpleBanner("Bluetooth ON", 3000));
+            if (nimbleBluetooth && !nimbleBluetooth->isActive())
+                nimbleBluetooth->setup();
+        }
+#endif
+        nodeDB->saveToDisk();
     };
-    bannerOptions.InitialSelected = config.bluetooth.enabled ? 1 : 2;
+    // Initial selected item
+#ifdef BLUETOOTH_MAY_SLEEP
+    if (config.bluetooth.enabled && nimbleBluetooth && nimbleBluetooth->getBluetoothCycleMode())
+        bannerOptions.InitialSelected = 3; // Cycle
+    else
+#endif
+        bannerOptions.InitialSelected = config.bluetooth.enabled ? 1 : 2;
     screen->showOverlayBanner(bannerOptions);
 }
 
