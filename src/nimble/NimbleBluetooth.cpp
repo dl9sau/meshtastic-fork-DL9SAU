@@ -951,6 +951,7 @@ void NimbleBluetooth::deinit()
 #if defined(ARCH_ESP32) && !defined(NIMBLE_TWO)
     LOG_INFO("Disable bluetooth (menu toggle)");
     isDeInit = true;
+    s_didSleepSinceBoot = true; // ensure setup() re-enables address resolution + IRKs
 
     // Full teardown: stop host, deinit controller, delete server hierarchy
     NimBLEDevice::deinit(true);
@@ -1059,7 +1060,7 @@ void NimbleBluetooth::setup()
     ble_gap_event_listener_register(&s_disconnectListener, disconnect_reason_listener, NULL);
 
 #ifdef ARCH_ESP32
-    {
+    if (s_didSleepSinceBoot) {
         int peerCnt = 0, ourCnt = 0;
         ble_store_util_count(BLE_STORE_OBJ_TYPE_PEER_SEC, &peerCnt);
         ble_store_util_count(BLE_STORE_OBJ_TYPE_OUR_SEC, &ourCnt);
@@ -1084,6 +1085,7 @@ void NimbleBluetooth::setup()
         if (rc != 0) {
             LOG_WARN("BLE restore_irks retry failed rc=%d", rc);
         }
+        s_didSleepSinceBoot = false; // one-shot per deinit cycle
     }
 #endif
     NimBLEDevice::setPower(ESP_PWR_LVL_P9);
