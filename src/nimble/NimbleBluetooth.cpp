@@ -138,10 +138,25 @@ static std::atomic<uint16_t> nimbleBluetoothConnHandle{BLE_HS_CONN_HANDLE_NONE};
 // callback while the host is mid-reset crashes (LoadProhibited), so the main task does it instead.
 static std::atomic<bool> pendingStartAdvertising{false};
 
-#ifdef BLUETOOTH_MAY_SLEEP
-// Set in powerSleep(), checked in setup() to detect first init after deinit.
+// Set by powerSleep() and deinit() (menu toggle), checked in setup() to
+// gate address-resolution + IRK restore on the first init after any deinit.
+//
+// Only load-bearing for ESP32 + NimBLE: after NimBLEDevice::deinit() resets
+// the ESP32-S3 controller, LE Address Resolution defaults to OFF and the
+// sync-time restore_irks() races with controller readiness -> bonded phones
+// with RPAs fail LTK lookup and instant-disconnect with reason 531. The
+// checked branch in setup() (#ifdef ARCH_ESP32) issues an HCI 0x202D and a
+// second restore_irks() after a short delay to fix this.
+//
+// Also prevents a boot-loop on fresh power-on where the initial init() has
+// already synced the controller correctly and a second restore_irks() would
+// race there too -- flag stays false until a deinit happens.
+//
+// On non-ESP32 targets and in the initial-boot path this flag is set/reset
+// but never checked -- costs 1 byte BSS, keeps deinit()/powerSleep()
+// compile-clean across build configs including builds without the Phase-1
+// power cycler (-DBLUETOOTH_MAY_SLEEP off).
 static std::atomic<bool> s_didSleepSinceBoot{false};
-#endif
 
 static void clearPairingDisplay()
 {
@@ -883,10 +898,9 @@ void NimbleBluetooth::powerSleep()
         return;
     LOG_INFO("NimbleBluetooth: powerSleep (host deinit)");
     isDeInit = true;
-
-#ifdef BLUETOOTH_MAY_SLEEP
+    // ESP32+NimBLE: gates the setup() reinit fix (address-resolution + IRKs).
+    // On non-ESP32 targets this write is dead -- see the declaration comment.
     s_didSleepSinceBoot = true;
-#endif
 
     // 1. Advertising stoppen (defensiv)
     NimBLEAdvertising *pAdvertising = NimBLEDevice::getAdvertising();
@@ -951,7 +965,9 @@ void NimbleBluetooth::deinit()
 #if defined(ARCH_ESP32) && !defined(NIMBLE_TWO)
     LOG_INFO("Disable bluetooth (menu toggle)");
     isDeInit = true;
-    s_didSleepSinceBoot = true; // ensure setup() re-enables address resolution + IRKs
+    // ESP32+NimBLE: gates the setup() reinit fix. Load-bearing here (this
+    // branch is #ifdef ARCH_ESP32 already). See the declaration comment.
+    s_didSleepSinceBoot = true;
 
     // Full teardown: stop host, deinit controller, delete server hierarchy
     NimBLEDevice::deinit(true);

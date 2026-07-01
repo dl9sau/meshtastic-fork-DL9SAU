@@ -578,3 +578,39 @@ Zwei Vorteile:
 
 Reine Konstante-Anpassung, kein Strukturumbau. Trigger: zuerst Felder-
 fahrungen sammeln nach mehreren Wochen praktischer Nutzung.
+
+### TODO 2026-06-30: Upstream-PR fuer NimBLE deinit-Fix vorbereiten
+
+Der HCI-Address-Resolution + restore_irks-Fix aus Commits `8e709a7fa` +
+`94da6b5fa` + `c15f5f33b` ist generisch nuetzlich fuer ALLE Meshtastic-
+ESP32-User, nicht nur fuer unseren Cycler. Sollte als eigener PR an
+meshtastic/firmware upstream gehen.
+
+Aber: in unserem Tree sind die Fixes hinter `#ifdef BLUETOOTH_MAY_SLEEP`
+gegated und benutzen `s_didSleepSinceBoot` (= unser Cycler-State).
+Fuer Upstream muss das entkoppelt werden -- der Fix soll IMMER nach
+deinit() laufen, unabhaengig vom Cycler.
+
+Workflow-Skizze:
+```bash
+# 1. Fork auf GitHub anlegen
+# 2. Als zweites Remote
+git remote add fork git@github.com:DL9SAU/meshtastic-firmware.git
+# 3. Frischer Branch von origin/master
+git fetch origin
+git checkout -b nimble-deinit-fix origin/master
+# 4. Cherry-pick
+git cherry-pick 8e709a7fa 94da6b5fa c15f5f33b
+# 5. Entkoppeln: BLUETOOTH_MAY_SLEEP-Gates raus, s_didSleepSinceBoot
+#    als generischer "deinit happened" tracker im NimbleBluetooth selbst
+# 6. Push + PR
+git push -u fork nimble-deinit-fix
+```
+
+Empfehlung: in 2 PRs splitten
+* **PR-A:** nur HCI-Fix fuer deinit/init (max. Upstream-Mehrwert,
+  minimaler Diff)
+* **PR-B** spaeter: Cycler obendrauf (Heltec-Power-User-Feature)
+
+Cross-Ref: ble-power-cycle-hot-start-tuning memory + diese Wishlist
+Section 2026-06-22 ("Erledigt" Block oben).
