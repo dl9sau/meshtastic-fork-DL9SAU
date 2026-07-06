@@ -1,4 +1,4 @@
-ergleiche mir nochmal kurz unsere Sendeleistung und CR fuer unsere eigenen Aussendungen und fuer die Pakete die wir repeaten                     
+Wir vergleichen nochmal kurz unsere Sendeleistung und CR fuer unsere eigenen Aussendungen und fuer die Pakete die wir repeaten                     
 
 ⏺ Lass mich kurz die aktuelle Logik in den entsprechenden Stellen prüfen.
 
