@@ -4,6 +4,9 @@ set -e
 
 VERSION=`bin/buildinfo.py long`
 SHORT_VERSION=`bin/buildinfo.py short`
+# DL9SAU fork: filename uses long_fork (with -DL9SAU.g<hash>). Embedded
+# APP_VERSION stays VERSION (upstream-vanilla, Protobuf-safe). See readprops.py.
+FORK_VERSION=`bin/buildinfo.py long_fork`
 
 BUILDDIR=.pio/build/$1
 OUTDIR=release
@@ -20,7 +23,7 @@ rm -f $BUILDDIR/firmware*
 # The shell vars the build tool expects to find
 export APP_VERSION=$VERSION
 
-basename=firmware-$1-$VERSION
+basename=firmware-$1-$FORK_VERSION
 
 pio run --environment $1 -t mtjson # -v
 
@@ -33,7 +36,7 @@ echo "Copying ESP32 update bin file"
 cp $BUILDDIR/$basename.bin $OUTDIR/$basename.bin
 
 echo "Copying Filesystem for ESP32 targets"
-cp $BUILDDIR/littlefs-$1-$VERSION.bin $OUTDIR/littlefs-$1-$VERSION.bin
+cp $BUILDDIR/littlefs-$1-$FORK_VERSION.bin $OUTDIR/littlefs-$1-$FORK_VERSION.bin
 cp bin/device-install.* $OUTDIR/
 cp bin/device-update.* $OUTDIR/
 

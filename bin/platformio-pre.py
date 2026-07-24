@@ -10,8 +10,10 @@ else:
     from readprops import readProps
     prefsLoc = env["PROJECT_DIR"] + "/version.properties"
     verObj = readProps(prefsLoc)
-    env.Replace(PROGNAME=f"firmware-{env.get('PIOENV')}-{verObj['long']}")
-    env.Replace(ESP32_FS_IMAGE_NAME=f"littlefs-{env.get('PIOENV')}-{verObj['long']}")
+    # DL9SAU fork: filename uses long_fork (with -DL9SAU.g<hash> marker), embedded
+    # APP_VERSION uses long (upstream-vanilla, Protobuf-safe). See readprops.py.
+    env.Replace(PROGNAME=f"firmware-{env.get('PIOENV')}-{verObj['long_fork']}")
+    env.Replace(ESP32_FS_IMAGE_NAME=f"littlefs-{env.get('PIOENV')}-{verObj['long_fork']}")
 
 # Print the new program name for verification
 print(f"PROGNAME: {env.get('PROGNAME')}")

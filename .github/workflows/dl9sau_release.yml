@@ -1,0 +1,315 @@
+name: DL9SAU Fork Release
+
+# Custom Fork-Release-Workflow. Manuell in der GitHub UI ausgeloest.
+# Baut Meshtastic-Firmware fuer alle Release+pr-Level Boards, packt sie in
+# arch-abhaengige ZIPs, und legt zusaetzlich fuer eine kleine Liste populaerer
+# Boards die einzelnen .bin/.factory.bin/.uf2 als Draft-Release-Assets ab.
+#
+# Filename/Tag/Release-Name tragen den `-DL9SAU.g<hash>`-Marker (via readprops.py
+# long_fork Feld). Das embedded APP_VERSION im Firmware selbst bleibt upstream-
+# vanilla `2.7.27.<hash>` (Protobuf-firmware_version ist char[18], 22-char-Marker
+# wuerde truncaten). Siehe Wishlist-DL9SAU.md Eintrag "2026-07-23 CI/Release-Workflow".
+
+on:
+  workflow_dispatch: {}
+
+concurrency:
+  group: dl9sau-release-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: read-all
+
+# Fork-Safety: dieser Workflow laeuft nur im DL9SAU-Fork.
+# Wer den Fork wieder-forkt und den Workflow versehentlich anstosst, kriegt Skip.
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    if: github.repository == 'dl9sau/meshtastic-fork-DL9SAU'
+    steps:
+      - run: echo "Running on ${{ github.repository }} — proceed."
+
+  setup:
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: 3.x
+          cache: pip
+      - run: pip install -U platformio
+      - name: Generate matrix (Release + pr Level, alle Archs)
+        id: jsonStep
+        run: |
+          # Kein --level Flag = Default = Release + pr (siehe bin/generate_ci_matrix.py:65-72).
+          # "extra" wird bewusst weggelassen (~91 Nischen-Boards).
+          TARGETS=$(./bin/generate_ci_matrix.py all)
+          echo "all=$TARGETS" >> $GITHUB_OUTPUT
+          # Kurzer Summary im Job — nicht der volle JSON (waer zu viel).
+          COUNT=$(echo "$TARGETS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+          echo "## Setup" >> $GITHUB_STEP_SUMMARY
+          echo "Building **$COUNT** boards (Release + pr Level, alle Archs)." >> $GITHUB_STEP_SUMMARY
+    outputs:
+      all: ${{ steps.jsonStep.outputs.all }}
+
+  version:
+    needs: guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Read version strings
+        id: version
+        env:
+          BUILD_LOCATION: local
+        run: |
+          LONG=$(./bin/buildinfo.py long)
+          LONG_FORK=$(./bin/buildinfo.py long_fork)
+          SHORT=$(./bin/buildinfo.py short)
+          echo "long=$LONG" >> $GITHUB_OUTPUT
+          echo "long_fork=$LONG_FORK" >> $GITHUB_OUTPUT
+          echo "short=$SHORT" >> $GITHUB_OUTPUT
+          {
+            echo "## Version"
+            echo "| Feld | Wert |"
+            echo "| --- | --- |"
+            echo "| short (Protobuf) | \`$SHORT\` |"
+            echo "| long (embedded APP_VERSION, upstream-vanilla) | \`$LONG\` |"
+            echo "| long_fork (Filename/Tag, mit Marker) | \`$LONG_FORK\` |"
+          } >> $GITHUB_STEP_SUMMARY
+    outputs:
+      long: ${{ steps.version.outputs.long }}
+      long_fork: ${{ steps.version.outputs.long_fork }}
+      short: ${{ steps.version.outputs.short }}
+
+  build:
+    needs: [setup, version]
+    strategy:
+      fail-fast: false
+      matrix:
+        build: ${{ fromJson(needs.setup.outputs.all) }}
+    # Upstream reusable workflow, unveraendert. `version` als Info-String an den
+    # artifact-name -- wir uebergeben long_fork damit die Artefakt-Namen konsistent
+    # sind. `pio_env` und `platform` triggern den Build.
+    uses: ./.github/workflows/build_firmware.yml
+    with:
+      version: ${{ needs.version.outputs.long_fork }}
+      pio_env: ${{ matrix.build.board }}
+      platform: ${{ matrix.build.platform }}
+
+  gather-artifacts:
+    needs: [version, build]
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - esp32
+          - esp32s3
+          - esp32c3
+          - esp32c6
+          - nrf52840
+          - rp2040
+          - rp2350
+          - stm32
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Download all firmware artifacts for ${{ matrix.arch }}
+        uses: actions/download-artifact@v8
+        with:
+          path: ./
+          pattern: firmware-${{ matrix.arch }}-*
+          merge-multiple: true
+
+      - name: Show downloaded files
+        run: ls -R || true
+
+      - name: Device scripts permissions
+        run: |
+          chmod +x ./device-install.sh || true
+          chmod +x ./device-update.sh || true
+
+      # Ein grosses arch-ZIP wie Upstream, damit User die die ganze Familie wollen
+      # eine Datei runterladen koennen. Enthaelt: firmware/littlefs/OTA-bin,
+      # .uf2, .hex, .zip, device-install/update Scripts. Aehnlich Upstreams
+      # gather-artifacts, aber ein einziger Schritt (kein doppeltes upload/download).
+      - name: Create arch ZIP
+        run: |
+          mkdir -p ./output-zip
+          # Nur firmware*, littlefs*, uf2, hex, zip, device-scripts
+          shopt -s nullglob
+          for f in ./firmware-* ./littlefs-* ./bleota*.bin ./mt-*-ota.bin \
+                   ./Meshtastic_nRF52_factory_erase*.uf2 ./device-*.sh ./device-*.bat; do
+            cp "$f" ./output-zip/ 2>/dev/null || true
+          done
+          if [ -z "$(ls -A ./output-zip 2>/dev/null)" ]; then
+            echo "No artifacts found for ${{ matrix.arch }} -- skipping ZIP"
+            echo "## ${{ matrix.arch }}: NO ARTIFACTS (all builds failed?)" >> $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          ZIPNAME="firmware-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}.zip"
+          zip -j -9 -r "$ZIPNAME" ./output-zip
+          echo "Created $ZIPNAME ($(du -h "$ZIPNAME" | cut -f1))"
+          echo "## ${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "Zipped $(ls ./output-zip | wc -l | tr -d ' ') files → \`$ZIPNAME\` ($(du -h "$ZIPNAME" | cut -f1))" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload arch ZIP
+        if: hashFiles(format('firmware-{0}-{1}.zip', matrix.arch, needs.version.outputs.long_fork)) != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: dl9sau-arch-zip-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}
+          path: firmware-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}.zip
+          retention-days: 30
+
+  build-summary:
+    # Aggregiert die Erfolg/Fail-Status aller Build-Jobs zu einer sichtbaren
+    # Markdown-Tabelle im Run-Summary. Ueberlebt GitHub-Log-Trunkierung.
+    needs: [setup, version, build]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Render build result table
+        env:
+          MATRIX_JSON: ${{ needs.setup.outputs.all }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          {
+            echo "## Build Result"
+            echo ""
+            echo "Overall build job result: **$BUILD_RESULT**"
+            echo ""
+            echo "Full per-board status is in the 'build' matrix jobs above."
+            echo "For each red job the log shows exactly which env/arch failed."
+            echo ""
+            echo "Total boards attempted:"
+            echo "$MATRIX_JSON" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'- {len(d)} envs total')"
+          } >> $GITHUB_STEP_SUMMARY
+
+  release:
+    needs: [version, gather-artifacts]
+    permissions:
+      contents: write # gh release upload
+    runs-on: ubuntu-latest
+    env:
+      # Populaere Boards die zusaetzlich als Einzelfiles ins Release kommen.
+      # Wenn Du einen dazu willst oder wegnehmen -- einfach hier editieren.
+      # ESP32-S3 Boards → .bin + .factory.bin + littlefs.bin exposed.
+      POPULAR_ESP32:  |
+        heltec-wireless-tracker
+        heltec-wireless-tracker-v2
+        heltec-v3
+        heltec-v4
+        heltec-v4-tft
+      # NRF52840 Boards → nur .uf2 exposed (drag-and-drop flash-friendly).
+      POPULAR_NRF52: |
+        tracker-t1000-e
+        heltec-mesh-node-t114
+        heltec-mesh-node-t096
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # Alle arch-ZIPs aus gather-artifacts holen
+      - name: Download arch ZIPs
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dl9sau-arch-zip-*-${{ needs.version.outputs.long_fork }}
+          merge-multiple: true
+          path: ./release-assets
+
+      # Alle firmware-Artefakte holen (fuer's Popular-Board-Filtern brauchen wir die einzelnen Files)
+      - name: Download all firmware artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: firmware-*
+          merge-multiple: true
+          path: ./all-firmware
+
+      - name: Show what we have
+        run: |
+          echo "=== arch ZIPs ==="
+          ls -la ./release-assets/ || true
+          echo "=== all firmware files ==="
+          ls ./all-firmware/ | head -30
+
+      # Popular Boards Einzelfiles herauskopieren
+      - name: Extract popular board single-files
+        run: |
+          set -e
+          mkdir -p ./popular
+          VER="${{ needs.version.outputs.long_fork }}"
+          # ESP32-S3: .bin, .factory.bin, littlefs.bin
+          for board in $POPULAR_ESP32; do
+            for suffix in ".bin" ".factory.bin"; do
+              src="./all-firmware/firmware-${board}-${VER}${suffix}"
+              if [ -f "$src" ]; then
+                cp "$src" ./popular/
+                echo "  + firmware-${board}-${VER}${suffix}"
+              else
+                echo "  - MISSING: firmware-${board}-${VER}${suffix}"
+              fi
+            done
+            src="./all-firmware/littlefs-${board}-${VER}.bin"
+            if [ -f "$src" ]; then
+              cp "$src" ./popular/
+              echo "  + littlefs-${board}-${VER}.bin"
+            fi
+          done
+          # NRF52: .uf2
+          for board in $POPULAR_NRF52; do
+            src="./all-firmware/firmware-${board}-${VER}.uf2"
+            if [ -f "$src" ]; then
+              cp "$src" ./popular/
+              echo "  + firmware-${board}-${VER}.uf2"
+            else
+              echo "  - MISSING: firmware-${board}-${VER}.uf2"
+            fi
+          done
+          echo ""
+          echo "Popular single-files staged: $(ls ./popular | wc -l | tr -d ' ')"
+          ls ./popular/
+
+      - name: Render popular-boards summary
+        run: |
+          {
+            echo "## Popular Board Single-Files"
+            echo ""
+            echo "| File | Size |"
+            echo "| --- | --- |"
+            for f in ./popular/*; do
+              [ -f "$f" ] || continue
+              echo "| \`$(basename $f)\` | $(du -h "$f" | cut -f1) |"
+            done
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Create Draft Release
+        uses: softprops/action-gh-release@v3
+        with:
+          draft: true
+          prerelease: false
+          name: "DL9SAU Fork ${{ needs.version.outputs.long_fork }}"
+          tag_name: "v${{ needs.version.outputs.long_fork }}"
+          target_commitish: ${{ github.sha }}
+          body: |
+            DL9SAU Fork Release — ${{ needs.version.outputs.long_fork }}
+
+            Basiert auf Meshtastic Firmware `${{ needs.version.outputs.short }}` (upstream).
+            Embedded firmware version bleibt upstream-vanilla `${{ needs.version.outputs.long }}` (Protobuf-safe).
+            Marker `-DL9SAU.g<hash>` erscheint nur in Filenames und diesem Tag.
+
+            **Was drin ist:**
+            - `firmware-<arch>-...zip`: eine ZIP pro Architektur mit allen Board-Builds (analog Upstream)
+            - Popular Board-Files als Einzeldownload (spart Bandbreite gegenueber ZIP):
+              - ESP32-S3 (`.bin`, `.factory.bin`, `littlefs.bin`): heltec-wireless-tracker(+v2), heltec-v3, heltec-v4(+tft)
+              - NRF52 (`.uf2`): tracker-t1000-e, heltec-mesh-node-t114, heltec-mesh-node-t096
+
+            Draft-Release: nach Sichtung manuell auf **Publish** klicken.
+          files: |
+            ./release-assets/*.zip
+            ./popular/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
