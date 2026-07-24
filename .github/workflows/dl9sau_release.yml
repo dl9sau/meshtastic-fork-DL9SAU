@@ -138,36 +138,61 @@ jobs:
           chmod +x ./device-install.sh || true
           chmod +x ./device-update.sh || true
 
-      # Ein grosses arch-ZIP wie Upstream, damit User die die ganze Familie wollen
-      # eine Datei runterladen koennen. Enthaelt: firmware/littlefs/OTA-bin,
-      # .uf2, .hex, .zip, device-install/update Scripts. Aehnlich Upstreams
-      # gather-artifacts, aber ein einziger Schritt (kein doppeltes upload/download).
-      - name: Create arch ZIP
+      # Zwei separate ZIPs pro Arch:
+      #   firmware-<arch>-<ver>.zip     -- die "Nutz"-Dateien (bin/uf2/hex/OTA/littlefs)
+      #   firmware-<arch>-<ver>-elf.zip -- die .elf Debug-Symbole (~23 MB/Board auf esp32s3)
+      # Grund: ELFs nur fuer Debugging noetig (addr2line etc), fuer normale User
+      # unnoetiger Ballast. In einem ZIP zusammen waeren's hunderte MB (esp32s3
+      # hatte 519 MB im ersten Testrun).
+      - name: Create arch ZIP (firmware) + separate elf ZIP
         run: |
-          mkdir -p ./output-zip
-          # Nur firmware*, littlefs*, uf2, hex, zip, device-scripts
           shopt -s nullglob
-          for f in ./firmware-* ./littlefs-* ./bleota*.bin ./mt-*-ota.bin \
-                   ./Meshtastic_nRF52_factory_erase*.uf2 ./device-*.sh ./device-*.bat; do
+          # ---- Firmware-ZIP (ohne ELFs) ----
+          mkdir -p ./output-zip
+          for f in ./firmware-*.bin ./firmware-*.factory.bin ./firmware-*.uf2 \
+                   ./firmware-*.factory.uf2 ./firmware-*.hex ./firmware-*.merged.hex \
+                   ./firmware-*.zip ./firmware-*.mt.json \
+                   ./littlefs-*.bin ./bleota*.bin ./mt-*-ota.bin \
+                   ./Meshtastic_nRF52_factory_erase*.uf2 \
+                   ./device-*.sh ./device-*.bat; do
             cp "$f" ./output-zip/ 2>/dev/null || true
           done
           if [ -z "$(ls -A ./output-zip 2>/dev/null)" ]; then
-            echo "No artifacts found for ${{ matrix.arch }} -- skipping ZIP"
+            echo "No firmware artifacts for ${{ matrix.arch }} -- skipping"
             echo "## ${{ matrix.arch }}: NO ARTIFACTS (all builds failed?)" >> $GITHUB_STEP_SUMMARY
             exit 0
           fi
           ZIPNAME="firmware-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}.zip"
           zip -j -9 -r "$ZIPNAME" ./output-zip
           echo "Created $ZIPNAME ($(du -h "$ZIPNAME" | cut -f1))"
-          echo "## ${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
-          echo "Zipped $(ls ./output-zip | wc -l | tr -d ' ') files → \`$ZIPNAME\` ($(du -h "$ZIPNAME" | cut -f1))" >> $GITHUB_STEP_SUMMARY
 
-      - name: Upload arch ZIP
+          # ---- ELF-ZIP (nur Debug-Symbole) ----
+          mkdir -p ./output-elfs
+          for f in ./firmware-*.elf; do
+            cp "$f" ./output-elfs/ 2>/dev/null || true
+          done
+          ELFCOUNT=$(ls ./output-elfs 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$ELFCOUNT" -gt 0 ]; then
+            ELFZIP="firmware-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}-elf.zip"
+            zip -j -9 -r "$ELFZIP" ./output-elfs
+            echo "Created $ELFZIP ($(du -h "$ELFZIP" | cut -f1))"
+            ELFLINE=" + $ELFCOUNT elfs → \`$ELFZIP\` ($(du -h "$ELFZIP" | cut -f1))"
+          else
+            ELFLINE=""
+          fi
+
+          # ---- Summary ----
+          echo "## ${{ matrix.arch }}" >> $GITHUB_STEP_SUMMARY
+          echo "$(ls ./output-zip | wc -l | tr -d ' ') firmware files → \`$ZIPNAME\` ($(du -h "$ZIPNAME" | cut -f1))$ELFLINE" >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload arch ZIPs (firmware + optional elf)
         if: hashFiles(format('firmware-{0}-{1}.zip', matrix.arch, needs.version.outputs.long_fork)) != ''
         uses: actions/upload-artifact@v7
         with:
           name: dl9sau-arch-zip-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}
-          path: firmware-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}.zip
+          path: |
+            firmware-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}.zip
+            firmware-${{ matrix.arch }}-${{ needs.version.outputs.long_fork }}-elf.zip
           retention-days: 30
 
   build-summary:
@@ -316,7 +341,8 @@ jobs:
               Protobuf-safe unter 18 Zeichen)
 
             **Was drin ist:**
-            - `firmware-<arch>-...zip`: eine ZIP pro Architektur mit allen Board-Builds (analog Upstream)
+            - `firmware-<arch>-...zip`: eine ZIP pro Architektur mit allen Board-Builds (Firmware-Nutzfiles)
+            - `firmware-<arch>-...-elf.zip`: Debug-Symbole (.elf) fuer addr2line/Crash-Analyse -- fuer normale User NICHT noetig
             - Popular Board-Files als Einzeldownload (spart Bandbreite gegenueber ZIP):
               - ESP32-S3 (`.bin`, `.factory.bin`, `littlefs.bin`): heltec-wireless-tracker(+v2), heltec-v3, heltec-v4(+tft)
               - NRF52 (`.uf2`): tracker-t1000-e, heltec-mesh-node-t114, heltec-mesh-node-t096
