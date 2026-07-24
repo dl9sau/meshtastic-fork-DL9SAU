@@ -104,6 +104,9 @@ jobs:
 
   gather-artifacts:
     needs: [version, build]
+    # Auch laufen wenn einzelne Build-Jobs rot sind -- wir wollen ja Partial-
+    # Releases mit nur den erfolgreich gebauten Boards, nicht alles-oder-nichts.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
@@ -194,6 +197,10 @@ jobs:
 
   release:
     needs: [version, gather-artifacts]
+    # gather-artifacts hat if:!cancelled() -- release nur laufen wenn gather
+    # WIRKLICH gelaufen ist und Zip-Assets produziert hat, nicht wenn alle
+    # gather-artifacts-Matrix-Jobs komplett fehlgeschlagen sind.
+    if: ${{ !cancelled() && needs.gather-artifacts.result == 'success' }}
     permissions:
       contents: write # gh release upload
     runs-on: ubuntu-latest
