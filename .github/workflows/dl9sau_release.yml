@@ -5,10 +5,14 @@ name: DL9SAU Fork Release
 # arch-abhaengige ZIPs, und legt zusaetzlich fuer eine kleine Liste populaerer
 # Boards die einzelnen .bin/.factory.bin/.uf2 als Draft-Release-Assets ab.
 #
-# Filename/Tag/Release-Name tragen den `-DL9SAU.g<hash>`-Marker (via readprops.py
-# long_fork Feld). Das embedded APP_VERSION im Firmware selbst bleibt upstream-
-# vanilla `2.7.27.<hash>` (Protobuf-firmware_version ist char[18], 22-char-Marker
-# wuerde truncaten). Siehe Wishlist-DL9SAU.md Eintrag "2026-07-23 CI/Release-Workflow".
+# Zwei Marker in unterschiedlichen Ebenen:
+#   - Filename/Tag/Release-Name: `-DL9SAU.g<hash>` (readprops.py long_fork Feld,
+#     ausfuehrlicher, MeshCore-analog, fuer Menschen beim Download klar erkennbar)
+#   - Embedded APP_VERSION im Firmware: `-f.<hash>` (readprops.py long Feld,
+#     kompakt weil Protobuf-firmware_version char[18], "f" = fork). Andere Nodes/
+#     die App sehen den kurzen Marker und wissen "das ist kein Stock-Build".
+# Siehe Wishlist-DL9SAU.md Eintrag "2026-07-23 CI/Release-Workflow" fuer die
+# Design-Rationale und die 17-char-Grenze.
 
 on:
   workflow_dispatch: {}
@@ -72,11 +76,11 @@ jobs:
           echo "short=$SHORT" >> $GITHUB_OUTPUT
           {
             echo "## Version"
-            echo "| Feld | Wert |"
-            echo "| --- | --- |"
-            echo "| short (Protobuf) | \`$SHORT\` |"
-            echo "| long (embedded APP_VERSION, upstream-vanilla) | \`$LONG\` |"
-            echo "| long_fork (Filename/Tag, mit Marker) | \`$LONG_FORK\` |"
+            echo "| Feld | Wert | Sichtbar in |"
+            echo "| --- | --- | --- |"
+            echo "| short (Protobuf) | \`$SHORT\` | firmware_version-Feld |"
+            echo "| long (embedded APP_VERSION, kurzer -f Marker) | \`$LONG\` | App / MapReport ueber Mesh |"
+            echo "| long_fork (langer DL9SAU Marker) | \`$LONG_FORK\` | Filename / Tag / Release-Name |"
           } >> $GITHUB_STEP_SUMMARY
     outputs:
       long: ${{ steps.version.outputs.long }}
@@ -298,8 +302,11 @@ jobs:
             DL9SAU Fork Release — ${{ needs.version.outputs.long_fork }}
 
             Basiert auf Meshtastic Firmware `${{ needs.version.outputs.short }}` (upstream).
-            Embedded firmware version bleibt upstream-vanilla `${{ needs.version.outputs.long }}` (Protobuf-safe).
-            Marker `-DL9SAU.g<hash>` erscheint nur in Filenames und diesem Tag.
+
+            **Zwei Marker:**
+            - Filename / Tag: `-DL9SAU.g<hash>` (lang, MeshCore-analog)
+            - Embedded (App, MapReport): `${{ needs.version.outputs.long }}` (kurz, "-f" = fork,
+              Protobuf-safe unter 18 Zeichen)
 
             **Was drin ist:**
             - `firmware-<arch>-...zip`: eine ZIP pro Architektur mit allen Board-Builds (analog Upstream)
