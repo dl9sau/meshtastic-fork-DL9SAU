@@ -32,12 +32,14 @@ def readProps(prefsLoc):
         # if isDirty:
         #     # short for 'dirty', we want to keep our verstrings source for protobuf reasons
         #     suffix = sha + "-d"
-        # DL9SAU fork: embedded APP_VERSION carries a subtle "-f." marker (semver
-        # pre-release notation, "f" = fork) so other nodes and the app can tell
-        # this is not a stock build. Kept short to stay within the 18-char Protobuf
-        # firmware_version field (17 usable + NUL). Airtime cost: ~2 chars extra
-        # in MapReport / DeviceMetadata (rare packets).
-        verObj["long"] = "{}-f.{}".format(verObj["short"], suffix)
+        # DL9SAU fork: embedded APP_VERSION carries the full "-DL9SAU." marker
+        # (semver pre-release notation) so anyone Googling the version string
+        # lands on this fork's repository. The hash is truncated to 3 chars to
+        # keep the total within the 18-char Protobuf firmware_version field
+        # (17 usable + NUL). Example: "2.7.27-DL9SAU.456" = 17 chars.
+        # Tradeoff: 3-char SHA = 4096 buckets -> dev-build collisions possible,
+        # release traceability still fine (few releases per year).
+        verObj["long"] = "{}-DL9SAU.{}".format(verObj["short"], suffix[:3])
         # long_fork is the long, human-friendly filename marker (MeshCore-analog)
         # for GitHub-Release-Assets and git tag. Not embedded anywhere.
         verObj["long_fork"] = "{}-DL9SAU.g{}".format(verObj["short"], suffix)
@@ -45,7 +47,7 @@ def readProps(prefsLoc):
     except:
         # print("Unexpected error:", sys.exc_info()[0])
         # traceback.print_exc()
-        verObj["long"] = "{}-f".format(verObj["short"])
+        verObj["long"] = "{}-DL9SAU".format(verObj["short"])
         verObj["long_fork"] = "{}-DL9SAU".format(verObj["short"])
         verObj["deb"] = "{}.{}~{}".format(verObj["short"], run_number, build_location)
 
