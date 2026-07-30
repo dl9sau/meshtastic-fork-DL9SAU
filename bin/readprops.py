@@ -32,14 +32,21 @@ def readProps(prefsLoc):
         # if isDirty:
         #     # short for 'dirty', we want to keep our verstrings source for protobuf reasons
         #     suffix = sha + "-d"
-        # DL9SAU fork: embedded APP_VERSION carries the full "-DL9SAU." marker
+        # DL9SAU fork: embedded APP_VERSION carries the full "-DL9SAU-" marker
         # (semver pre-release notation) so anyone Googling the version string
         # lands on this fork's repository. The hash is truncated to 3 chars to
         # keep the total within the 18-char Protobuf firmware_version field
-        # (17 usable + NUL). Example: "2.7.27-DL9SAU.456" = 17 chars.
+        # (17 usable + NUL). Example: "2.7.27-DL9SAU-456" = 17 chars.
+        # Note the "-" (not ".") between DL9SAU and the hash: the iOS/Android
+        # Meshtastic apps split the semver pre-release on ".", displaying only
+        # the first token — so "2.7.27-DL9SAU.456" would show up as
+        # "2.7.27-DL9SAU" in the app, silently dropping the hash. Using "-"
+        # keeps DL9SAU and the hash inside a single pre-release token, which
+        # both apps render in full. This is semver-2.0 compliant: pre-release
+        # identifiers may contain "-" ([0-9A-Za-z-]+).
         # Tradeoff: 3-char SHA = 4096 buckets -> dev-build collisions possible,
         # release traceability still fine (few releases per year).
-        verObj["long"] = "{}-DL9SAU.{}".format(verObj["short"], suffix[:3])
+        verObj["long"] = "{}-DL9SAU-{}".format(verObj["short"], suffix[:3])
         # long_fork is the long, human-friendly filename marker (MeshCore-analog)
         # for GitHub-Release-Assets and git tag. Not embedded anywhere.
         verObj["long_fork"] = "{}-DL9SAU.g{}".format(verObj["short"], suffix)
