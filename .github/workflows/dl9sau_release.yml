@@ -8,13 +8,10 @@ name: DL9SAU Fork Release
 # Zwei Marker in unterschiedlichen Ebenen:
 #   - Filename/Tag/Release-Name: `-DL9SAU.g<7hash>` (readprops.py long_fork Feld,
 #     ausfuehrlicher, MeshCore-analog, fuer Menschen beim Download klar erkennbar).
-#   - Embedded APP_VERSION im Firmware: `-DL9SAU-<3hash>` (readprops.py long Feld).
+#   - Embedded APP_VERSION im Firmware: `-DL9SAU.<3hash>` (readprops.py long Feld).
 #     Volle Callsign, damit die in der App/im Node sichtbare Version bei Google
 #     direkt hierher fuehrt. Hash auf 3 chars gekuerzt weil Protobuf
 #     firmware_version char[18] (17 nutzbar + NUL) das Budget hart begrenzt.
-#     "-" (nicht ".") zwischen DL9SAU und Hash: iOS/Android-Apps splitten den
-#     semver pre-release am "." und zeigen nur den ersten Token, dh mit "."
-#     wuerde die App "2.7.27-DL9SAU" anzeigen und den Hash schlucken.
 # Siehe Wishlist-DL9SAU.md Eintrag "2026-07-23 CI/Release-Workflow" fuer die
 # Design-Rationale und die 17-char-Grenze.
 
